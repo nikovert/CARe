@@ -1,15 +1,34 @@
-One complete example with results. Run the file "train_double_integrator" in experiments_scripts
+# Certified Hamilton-Jacobi Reachability
 
-Please create a folder called logs. and transfer the files called train_3_space_system.py, train_double_integrator.py and train_triple_integrator.py to folder called experiment_scripts before running them.
+A Python package for certified Hamilton-Jacobi reachability analysis.
 
+## Prerequisites
 
-certreach/
-│
-├── __init__.py               # Initialize the package
-├── modules.py                # Core module definitions
-├── modules_dreal.py          # dReal-related modules
-├── modules_beyond.py         # Additional modules
-├── loss_functions.py         # Loss function definitions
-├── diff_operators.py         # Differential operators
-├── dataio.py                 # Data input/output utilities
-├── training.py               # Training loop and related functions
+- Python 3.9
+- dReal (SMT solver)
+
+## Installing dReal
+
+This package requires dReal SMT solver. Please follow the installation instructions on the [dReal repository](https://github.com/dreal/dreal4).
+
+## Installation
+
+To install the package, run:
+
+```bash
+pip install -e .
+```
+
+This will install the package and its dependencies while allowing you to modify the source code.
+
+## Dependencies
+
+The package dependencies are listed in `setup.py` and will be automatically installed during the installation process.
+
+## Usage
+
+[Add usage instructions here]
+
+## License
+
+[Add license information here]
