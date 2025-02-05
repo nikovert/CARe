@@ -1,0 +1,12 @@
+[project]
+name = "certreach"
+version = "0.1.0"
+description = "certifiable reachability analysis"
+authors = [
+    {name = "Prashant Solanki", email = "p.solanki@tudelft.nl"},
+    {name = "Nikolaus Vertovec", email = "nikolaus.vertovec@st-hughs.ox.ac.uk"},
+    {name = "Yannik Schnitzer", email = "yannik.schnitzer@keble.ox.ac.uk"}
+]
+
+[tool.flake8]
+max-line-length = 120
