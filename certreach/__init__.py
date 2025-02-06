@@ -1,12 +1,12 @@
 # Core modules
-from .learning.generic_training import train
+from .learning.training import train
 from .learning import loss_functions
 from .common import dataio
 from .verification import symbolic
 from .verification import dreal_utils
 
 # Classes and functions that should be directly accessible
-from .learning.mlp import SingleBVPNet, BatchLinear, Sine, FCBlock
+from .learning.networks import SingleBVPNet, BatchLinear, Sine, FCBlock
 from .common.dataio import (
     DoubleIntegratorDataset,
     get_experiment_folder,

@@ -12,8 +12,8 @@ from certreach.common.dataio import (
     get_experiment_folder,
     save_experiment_details
 )
-from certreach.learning.generic_training import train
-from certreach.learning.mlp import SingleBVPNet
+from certreach.learning.training import train
+from certreach.learning.networks import SingleBVPNet
 from certreach.verification.symbolic import extract_symbolic_model
 from certreach.verification.dreal_utils import (
     dreal_double_integrator_BRS,
