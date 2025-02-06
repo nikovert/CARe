@@ -1,0 +1,9 @@
+dreal==4.21.6.2
+matplotlib==3.9.2
+numpy
+scipy==1.13.1
+sympy==1.13.1
+tensorboard 
+torch==2.6.0
+torchvision==0.21.0
+tqdm

@@ -20,15 +20,3 @@ pip install -e .
 ```
 
 This will install the package and its dependencies while allowing you to modify the source code.
-
-## Dependencies
-
-The package dependencies are listed in `setup.py` and will be automatically installed during the installation process.
-
-## Usage
-
-[Add usage instructions here]
-
-## License
-
-[Add license information here]

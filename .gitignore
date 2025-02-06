@@ -31,9 +31,6 @@ MANIFEST
 *.manifest
 *.spec
 
-# Ignore all .txt files
-*.txt
-
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
@@ -116,9 +113,6 @@ dmypy.json
 
 # PyCharm
 .idea/
-
-# VS Code
-.vscode/
 
 # Local virtual environments
 venv/

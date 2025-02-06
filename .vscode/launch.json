@@ -1,0 +1,84 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Train Double Integrator",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/main.py",
+            "args": [
+                "--example", "double_integrator",
+                "--run_mode", "train",
+                "--logging_root", "./logs",
+                "--batch_size", "32",
+                "--lr", "2e-5",
+                "--num_epochs", "30000",
+                "--model_type", "sine",
+                "--model_mode", "mlp"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Verify Double Integrator",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/main.py",
+            "args": [
+                "--example", "double_integrator",
+                "--run_mode", "verify",
+                "--logging_root", "./logs"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Train and Verify Double Integrator",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/main.py",
+            "args": [
+                "--example", "double_integrator",
+                "--run_mode", "all",
+                "--logging_root", "./logs",
+                "--batch_size", "32",
+                "--lr", "2e-5",
+                "--num_epochs", "30000",
+                "--model_type", "sine",
+                "--model_mode", "mlp"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Quick Loop Test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/main.py",
+            "args": [
+                "--example", "double_integrator",
+                "--run_mode", "all",
+                "--logging_root", "./logs",
+                "--batch_size", "32",
+                "--lr", "2e-5",
+                "--num_epochs", "10",
+                "--model_type", "sine",
+                "--model_mode", "mlp"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        }
+    ]
+}
