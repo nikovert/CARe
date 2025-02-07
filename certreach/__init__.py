@@ -14,12 +14,11 @@ from .common.dataio import (
     check_existing_experiment
 )
 from .verification.dreal_utils import (
-    dreal_double_integrator_BRS,
-    CounterexampleDatasetDoubleIntegrator,
     extract_dreal_partials,
     process_dreal_result,
     serializable_to_sympy,
-    sympy_to_serializable
+    sympy_to_serializable,
+    CounterexampleDataset
 )
 from .verification.symbolic import (
     get_symbolic_layer_output_generalized,

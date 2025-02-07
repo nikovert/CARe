@@ -368,9 +368,10 @@ def dreal_double_integrator_BRS(dreal_partials, dreal_variables, epsilon=0.5, re
     return result_data
 
 
-class BaseCounterexampleDataset(Dataset):
+class CounterexampleDataset(Dataset):
     """
-    Base dataset class for counterexample-based sampling with uniform sampling logic.
+    Dataset class for counterexample-based sampling with uniform sampling logic.
+    Can be used for any system with state-space sampling in [-1, 1].
     """
 
     def __init__(self, counterexample, numpoints, percentage_in_counterexample, 
@@ -472,21 +473,6 @@ class BaseCounterexampleDataset(Dataset):
     def _compute_boundary_values(self, coords):
         """Compute boundary values for the given coordinates."""
         return torch.norm(coords[:, 1:], dim=1, keepdim=True) - self.collision_radius
-
-
-class CounterexampleDatasetDoubleIntegrator(BaseCounterexampleDataset):
-    """Dataset class for the Double Integrator system."""
-    pass  # Inherits all functionality from base class
-
-
-class CounterexampleDatasetThreeStateSystem(BaseCounterexampleDataset):
-    """Dataset class for the 3-state system."""
-    pass  # Inherits all functionality from base class
-
-
-class CounterexampleDatasetTripleIntegrator(BaseCounterexampleDataset):
-    """Dataset class for the Triple Integrator system."""
-    pass  # Inherits all functionality from base class
 
 
 def dreal_three_state_system_BRS(dreal_partials, dreal_variables, epsilon=0.5, reachMode='forward', reachAim='reach', setType='set', save_directory="./", k1=1.0, k2=1.0, c1=0.5, c2=0.5, u_max=1.0):

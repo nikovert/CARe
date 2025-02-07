@@ -7,6 +7,7 @@ import multiprocessing
 import logging
 from examples.log import configure_logging
 import torch
+from certreach.verification.cegis import CEGISLoop
 
 def parse_args():
     """Parse command line arguments."""
@@ -65,8 +66,28 @@ def parse_args():
     # Add device argument
     p.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
                   help='Device to use for computation (cuda/cpu)')
+
+    # Training Mode Settings
+    p.add_argument('--quick_mode', action='store_true', default=False,
+                  help='Enable quick testing mode with reduced epochs and iterations')
+    p.add_argument('--full_mode', action='store_true', default=False,
+                  help='Enable full training mode with complete epochs and iterations')
     
-    return p.parse_args()
+    args = p.parse_args()
+
+    # Adjust parameters based on mode
+    if args.quick_mode:
+        args.num_epochs = 10
+        args.max_iterations = 2
+        args.epsilon = 0.5
+        args.iterate = True
+    elif args.full_mode:
+        args.num_epochs = 30000
+        args.max_iterations = 10
+        args.epsilon = 0.35
+        args.iterate = True
+
+    return args
 
 def cleanup():
     """Cleanup function to handle multiprocessing resources"""
@@ -91,7 +112,7 @@ def main():
     # Create example with explicit device
     device = torch.device(args.device)
     example = create_example(args.example, args)
-    example.device = device  # Ensure device is set
+    example.device = device
     logger.info(f"Using device: {device}")
     
     # Run based on mode
@@ -101,23 +122,32 @@ def main():
     
     if args.run_mode in ['verify', 'all']:
         logger.info("Starting verification phase")
-        example.verify()
-        
-        # Get epsilon value from dreal result
-        dreal_result_path = f"{example.root_path}/dreal_result.json"
-        if os.path.exists(dreal_result_path):
-            try:
-                with open(dreal_result_path, 'r') as f:
-                    dreal_result = json.load(f)
-                    epsilon = dreal_result.get("epsilon", 0.35)
-                logger.info(f"Using epsilon value: {epsilon} from dReal results")
-                example.plot_final_model(example.model, example.root_path, epsilon)
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse dReal results from {dreal_result_path}")
-            except Exception as e:
-                logger.error(f"Error processing dReal results: {str(e)}")
+        if args.iterate:
+            logger.info(f"Starting {'quick' if args.quick_mode else 'full'} CEGIS loop")
+            logger.info(f"Parameters: epochs={args.num_epochs}, "
+                       f"max_iterations={args.max_iterations}, "
+                       f"epsilon={args.epsilon}")
+            
+            cegis = CEGISLoop(example, args)
+            result = cegis.run()
+            
+            if result.success:
+                logger.info(f"CEGIS completed. Best epsilon: {result.epsilon}")
+            else:
+                logger.error(f"CEGIS failed: {result.error_msg}")
         else:
-            logger.warning(f"dReal results not found at {dreal_result_path}")
+            example.verify()
+            # Plot results with current epsilon
+            dreal_result_path = f"{example.root_path}/dreal_result.json"
+            if os.path.exists(dreal_result_path):
+                try:
+                    with open(dreal_result_path, 'r') as f:
+                        dreal_result = json.load(f)
+                        epsilon = dreal_result.get("epsilon", args.epsilon)
+                    logger.info(f"Using epsilon value: {epsilon} from dReal results")
+                    example.plot_final_model(example.model, example.root_path, epsilon)
+                except Exception as e:
+                    logger.error(f"Error processing dReal results: {str(e)}")
 
     logger.info("Experiment completed")
 

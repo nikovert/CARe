@@ -18,8 +18,10 @@ from certreach.verification.symbolic import extract_symbolic_model
 from certreach.verification.dreal_utils import (
     dreal_double_integrator_BRS,
     extract_dreal_partials,
-    process_dreal_result
+    process_dreal_result,
+    CounterexampleDataset
 )
+from certreach.verification.verify import verify_system
 from .loss import initialize_loss
 
 # Set multiprocessing start method
@@ -76,19 +78,44 @@ class DoubleIntegrator:
                 reachAim=self.args.reachAim
             )
 
-    def train(self):
-        """Train the model"""
+    def train(self, counterexample=False):
+        """Train the model with optional counterexample handling."""
         self.logger.info("Initializing training components")
         self.initialize_components()
         
-        self.logger.info("Setting up data loader")
+        if counterexample:
+            self.logger.info("Creating counterexample dataset")
+            try:
+                # Load latest dReal results
+                with open(f"{self.root_path}/dreal_result.json", 'r') as f:
+                    result = json.load(f)
+                    
+                if "result" in result and result["result"] != "HJB Equation Satisfied":
+                    counterexample = result.get("counterexample")
+                    if counterexample:
+                        self.dataset = CounterexampleDataset(
+                            counterexample=counterexample,
+                            numpoints=10000,
+                            percentage_in_counterexample=20,
+                            percentage_at_t0=20,
+                            tMin=self.args.tMin,
+                            tMax=self.args.tMax,
+                            input_max=self.args.input_max,
+                            epsilon_radius=self.args.epsilon_radius,
+                            device=self.device
+                        )
+            except Exception as e:
+                self.logger.error(f"Failed to create counterexample dataset: {str(e)}")
+                raise
+        
+        # Setup data loader with proper CUDA options
         dataloader = torch.utils.data.DataLoader(
             self.dataset,
             batch_size=self.args.batch_size,
             shuffle=True,
             pin_memory=False  # Changed to False since data is already on device
         )
-
+        
         self.logger.info("Starting model training")
         train(
             model=self.model,
@@ -107,37 +134,6 @@ class DoubleIntegrator:
 
         self.logger.info("Saving experiment details")
         save_experiment_details(self.root_path, str(self.loss_fn), vars(self.args))
-        
-        if self.args.iterate:
-            self.logger.info("Starting iterative updates")
-            self.iterative_update()
-
-    def verify(self):
-        """Verify the trained model using dReal"""
-        self.logger.info("Starting model verification")
-        self.model = self.model.cpu()
-        
-        self.logger.info("Extracting symbolic model")
-        try:
-            symbolic_model = extract_symbolic_model(self.model, self.root_path)
-            result = extract_dreal_partials(symbolic_model, in_features=3)
-            
-            self.logger.info("Running dReal verification")
-            verification_result = dreal_double_integrator_BRS(
-                dreal_partials=result["dreal_partials"],
-                dreal_variables=result["dreal_variables"],
-                epsilon=0.35,
-                reachMode='forward',
-                reachAim='reach',
-                setType='set',
-                save_directory=self.root_path
-            )
-            
-            self.logger.info("Processing verification results")
-            process_dreal_result(f"{self.root_path}/dreal_result.json")
-        except Exception as e:
-            self.logger.error(f"Verification failed: {str(e)}")
-            raise
 
     def validate(self, model, ckpt_dir, epoch):
         """Validation function called during training"""
@@ -183,9 +179,12 @@ class DoubleIntegrator:
         velocities = V.reshape(-1, 1)
         time_coords = torch.ones_like(positions) * self.args.tMax
 
-        coords = torch.cat((time_coords, positions, velocities), dim=1)
+        # Move coordinates to the same device as the model
+        coords = torch.cat((time_coords, positions, velocities), dim=1).to(self.device)
         model_in = {'coords': coords}
-        model_out = model(model_in)['model_out'].detach().numpy().reshape(X.shape)
+        
+        # Get output and move back to CPU for plotting
+        model_out = model(model_in)['model_out'].cpu().detach().numpy().reshape(X.shape)
         adjusted_model_out = model_out - epsilon
 
         # Create comparison plots
@@ -223,7 +222,11 @@ class DoubleIntegrator:
         plt.close(fig)
         self.logger.debug(f"Saved comparison plot at: {save_path}")
 
-    def iterative_update(self):
-        """Perform iterative updates using counterexamples"""
-        # Add iterative update code from train_double_integrator.py's iterate loop here
-        pass
+    def load_model(self, model_path):
+        """Load a model with proper device handling."""
+        if self.model is None:
+            self.initialize_components()
+        
+        state_dict = torch.load(model_path, map_location=self.device)
+        self.model.load_state_dict(state_dict)
+        self.model.to(self.device)
