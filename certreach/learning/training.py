@@ -28,7 +28,12 @@ def train(model: torch.nn.Module,
           use_lbfgs: bool = False, 
           loss_schedules: Optional[Dict[str, Callable]] = None, 
           validation_fn: Optional[Callable] = None, 
-          start_epoch: int = 0) -> None:
+          start_epoch: int = 0,
+          device: Optional[torch.device] = None) -> None:
+
+    # Use provided device or default to CUDA if available
+    device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = model.to(device)
 
     optim = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -85,8 +90,13 @@ def train(model: torch.nn.Module,
             for step, (model_input, gt) in enumerate(train_dataloader):
                 start_time = time.time()
             
-                model_input = {key: value.cuda() for key, value in model_input.items()}
-                gt = {key: value.cuda() for key, value in gt.items()}
+                # Move data to device after loading, handling CPU pinned memory correctly
+                if device.type == 'cuda':
+                    model_input = {key: value.cuda(non_blocking=True) for key, value in model_input.items()}
+                    gt = {key: value.cuda(non_blocking=True) for key, value in gt.items()}
+                else:
+                    model_input = {key: value.to(device) for key, value in model_input.items()}
+                    gt = {key: value.to(device) for key, value in gt.items()}
 
                 if double_precision:
                     model_input = {key: value.double() for key, value in model_input.items()}

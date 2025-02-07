@@ -79,6 +79,28 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }
+        },
+        {
+            "name": "Quick Loop Test (CPU)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/main.py",
+            "args": [
+                "--example", "double_integrator",
+                "--run_mode", "all",
+                "--logging_root", "./logs",
+                "--batch_size", "32",
+                "--lr", "2e-5",
+                "--num_epochs", "10",
+                "--model_type", "sine",
+                "--model_mode", "mlp",
+                "--device", "cpu"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
         }
     ]
 }

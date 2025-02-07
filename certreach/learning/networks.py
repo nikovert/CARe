@@ -17,6 +17,7 @@ def set_known_weights_and_print(model):
     """
     layer_idx = 0
     weights_and_biases = []  # To store weights and biases for saving
+    device = next(model.parameters()).device  # Get model's device
 
     # Iterate through all named modules in the network
     for name, module in model.net.named_modules():
@@ -27,11 +28,13 @@ def set_known_weights_and_print(model):
             weight = torch.tensor(
                 [[0.1 * (layer_idx + i + j + 1) for j in range(module.weight.shape[1])]
                  for i in range(module.weight.shape[0])],
-                dtype=torch.float32
+                dtype=torch.float32,
+                device=device  # Use model's device
             )
             bias = torch.tensor(
                 [0.05 * (layer_idx + i + 1) for i in range(module.bias.shape[0])],
-                dtype=torch.float32
+                dtype=torch.float32,
+                device=device  # Use model's device
             )
 
             # Set weights and biases in the layer

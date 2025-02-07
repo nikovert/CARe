@@ -211,7 +211,7 @@ class BaseReachabilityDataset(Dataset):
     def __init__(self, numpoints, tMin=0.0, tMax=1.0, 
                  pretrain=False, pretrain_iters=2000,
                  counter_start=0, counter_end=100e3,
-                 num_src_samples=1000, seed=0):
+                 num_src_samples=1000, seed=0, device=None):
         """
         Initialize base dataset parameters.
 
@@ -225,9 +225,11 @@ class BaseReachabilityDataset(Dataset):
             counter_end (int): End value for curriculum counter
             num_src_samples (int): Number of source (t=0) samples
             seed (int): Random seed for reproducibility
+            device (torch.device): Device to store tensors (CPU or GPU)
         """
         super().__init__()
         torch.manual_seed(seed)
+        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         logger.debug(f"Initializing dataset with {numpoints} points")
 
@@ -254,10 +256,10 @@ class BaseReachabilityDataset(Dataset):
 
         if self.pretrain:
             # During pretraining, all samples are at t=0
-            time = torch.ones(self.numpoints, 1) * start_time
+            time = torch.ones(self.numpoints, 1, device=self.device) * start_time
         else:
             # Progressive sampling during training
-            time = self.tMin + torch.zeros(self.numpoints, 1).uniform_(
+            time = self.tMin + torch.zeros(self.numpoints, 1, device=self.device).uniform_(
                 0, (self.tMax - self.tMin) * (self.counter / self.full_count))
             # Ensure some samples at t=0
             time[-self.N_src_samples:, 0] = start_time
@@ -287,7 +289,7 @@ class BaseReachabilityDataset(Dataset):
         # Get time samples
         time, start_time = self._get_time_samples()
         
-        # Get state space samples (to be implemented by child classes)
+        # Get state space samples
         coords = self._sample_state_space()
         coords = torch.cat((time, coords), dim=1)
 
@@ -296,7 +298,7 @@ class BaseReachabilityDataset(Dataset):
 
         # Create Dirichlet mask
         if self.pretrain:
-            dirichlet_mask = torch.ones(coords.shape[0], 1) > 0
+            dirichlet_mask = torch.ones(coords.shape[0], 1, device=self.device) > 0
         else:
             dirichlet_mask = (coords[:, 0, None] == start_time)
 
@@ -321,16 +323,16 @@ class BaseReachabilityDataset(Dataset):
         """
         if self.num_states is None:
             raise ValueError("Child class must set self.num_states in __init__")
-        return torch.zeros(self.numpoints, self.num_states).uniform_(-1, 1)
+        return torch.zeros(self.numpoints, self.num_states, device=self.device).uniform_(-1, 1)
 
 
 class ReachabilityMultiVehicleCollisionSourceNE(BaseReachabilityDataset):
     def __init__(self, numpoints, collisionR=0.25, velocity=0.6, omega_max=1.1,
                  pretrain=False, tMin=0.0, tMax=0.5, counter_start=0, counter_end=100e3,
                  numEvaders=1, pretrain_iters=2000, angle_alpha=1.0, time_alpha=1.0,
-                 num_src_samples=1000):
+                 num_src_samples=1000, device=None):
         super().__init__(numpoints, tMin, tMax, pretrain, pretrain_iters,
-                        counter_start, counter_end, num_src_samples)
+                        counter_start, counter_end, num_src_samples, device=device)
         
         self.velocity = velocity
         self.omega_max = omega_max
@@ -343,7 +345,7 @@ class ReachabilityMultiVehicleCollisionSourceNE(BaseReachabilityDataset):
         self.num_pos_states = 2 * (numEvaders + 1)
 
     def _sample_state_space(self):
-        return torch.zeros(self.numpoints, self.num_states).uniform_(-1, 1)
+        return torch.zeros(self.numpoints, self.num_states, device=self.device).uniform_(-1, 1)
 
     def compute_boundary_values(self, coords):
         # Collision cost between the pursuer and the evaders
@@ -368,9 +370,9 @@ class ReachabilityMultiVehicleCollisionSourceNE(BaseReachabilityDataset):
 class ReachabilityAir3DSource(BaseReachabilityDataset):
     def __init__(self, numpoints, collisionR=0.25, velocity=0.6, omega_max=1.1,
                  pretrain=False, tMin=0.0, tMax=0.5, counter_start=0, counter_end=100e3,
-                 pretrain_iters=2000, angle_alpha=1.0, num_src_samples=1000, seed=0):
+                 pretrain_iters=2000, angle_alpha=1.0, num_src_samples=1000, seed=0, device=None):
         super().__init__(numpoints, tMin, tMax, pretrain, pretrain_iters,
-                        counter_start, counter_end, num_src_samples, seed)
+                        counter_start, counter_end, num_src_samples, seed, device=device)
         
         self.velocity = velocity
         self.omega_max = omega_max
@@ -379,7 +381,7 @@ class ReachabilityAir3DSource(BaseReachabilityDataset):
         self.num_states = 3
 
     def _sample_state_space(self):
-        return torch.zeros(self.numpoints, self.num_states).uniform_(-1, 1)
+        return torch.zeros(self.numpoints, self.num_states, device=self.device).uniform_(-1, 1)
 
     def compute_boundary_values(self, coords):
         boundary_values = torch.norm(coords[:, 1:3], dim=1, keepdim=True) - self.collisionR
@@ -401,7 +403,7 @@ class DoubleIntegratorDataset(BaseReachabilityDataset):
     def __init__(self, numpoints, tMin=0.0, tMax=1.0, 
                  input_max=1.0, pretrain=False, pretrain_iters=2000, 
                  counter_start=0, counter_end=100e3, 
-                 num_src_samples=1000, seed=0):
+                 num_src_samples=1000, seed=0, device=None):
         """
         Initialize the Double Integrator dataset.
 
@@ -414,38 +416,37 @@ class DoubleIntegratorDataset(BaseReachabilityDataset):
             pretrain_iters (int): Number of pretraining iterations.
             counter_start (int): Initial time counter for curriculum training.
             counter_end (int): Final time counter for curriculum training.
-            num_src_samples (int): Number of initial source samples.
+            num_src_samples (int): Number of initial samples at t=0.
             seed (int): Random seed for reproducibility.
+            device (torch.device): Device to store tensors (CPU or GPU).
         """
         super().__init__(numpoints, tMin, tMax, pretrain, pretrain_iters,
-                        counter_start, counter_end, num_src_samples, seed)
+                        counter_start, counter_end, num_src_samples, seed, device=device)
 
         self.input_max = input_max  # Maximum acceleration input
         self.num_states = 2  # Number of states: [position, velocity]
 
     def compute_boundary_values(self, coords):
         """
-        Compute the initial value function for the Double Integrator system,
-        using the same logic as the Air3D system.
-
-        This defines a zero-level set as a circle of radius `radius`
-        centered at the origin (x, v) = (0, 0).
+        Compute the initial value function for the Double Integrator system.
 
         Args:
             coords (torch.Tensor): Sampled state coordinates (t, x, v).
-            radius (float): Radius of the zero-level set (default=1.0).
 
         Returns:
-            torch.Tensor: Computed boundary values using Air3D logic.
+            torch.Tensor: Computed boundary values.
         """
-        # Extract state variables [x, v] from coordinates
+        # Extract state variables [x, v] from coordinates, already on correct device
         pos = coords[:, 1:3]  # Extract [x, v]
 
         # Compute Euclidean distance from the origin (x=0, v=0)
         boundary_values = torch.norm(pos, dim=1, keepdim=True)
 
-        # Define zero-level set like Air3D: distance from the origin minus radius
-        boundary_values -= 0.25
+        # Define zero-level set
+        # Since we're working with tensors already on the device, 
+        # make sure scalar is also a tensor on the same device
+        radius = torch.tensor(0.25, device=self.device)
+        boundary_values = boundary_values - radius
 
         return boundary_values
 
@@ -466,7 +467,7 @@ class DubinsCarDataset(BaseReachabilityDataset):
     def __init__(self, numpoints, tMin=0.0, tMax=1.0, 
                  velocity=0.6, omega_max=1.1, pretrain=False, 
                  pretrain_iters=2000, counter_start=0, counter_end=100e3, 
-                 num_src_samples=1000, seed=0, collision_radius=0.25):
+                 num_src_samples=1000, seed=0, collision_radius=0.25, device=None):
         """
         Initialize the dataset.
 
@@ -483,9 +484,10 @@ class DubinsCarDataset(BaseReachabilityDataset):
             num_src_samples (int): Number of initial samples at t=0.
             seed (int): Random seed for reproducibility.
             collision_radius (float): Radius of the obstacle for boundary conditions.
+            device (torch.device): Device to store tensors (CPU or GPU).
         """
         super().__init__(numpoints, tMin, tMax, pretrain, pretrain_iters,
-                        counter_start, counter_end, num_src_samples, seed)
+                        counter_start, counter_end, num_src_samples, seed, device=device)
 
         self.velocity = velocity
         self.omega_max = omega_max
@@ -524,7 +526,7 @@ class ThreeStateSystemDataset(BaseReachabilityDataset):
     def __init__(self, numpoints, tMin=0.0, tMax=1.0, 
                  input_max=1.0, pretrain=False, pretrain_iters=2000, 
                  counter_start=0, counter_end=100e3, 
-                 num_src_samples=1000, seed=0, radius=0.25):
+                 num_src_samples=1000, seed=0, radius=0.25, device=None):
         """
         Initialize the 3-state system dataset.
 
@@ -540,9 +542,10 @@ class ThreeStateSystemDataset(BaseReachabilityDataset):
             num_src_samples (int): Number of initial source samples.
             seed (int): Random seed for reproducibility.
             radius (float): Radius of the zero-level set (default=0.25).
+            device (torch.device): Device to store tensors (CPU or GPU).
         """
         super().__init__(numpoints, tMin, tMax, pretrain, pretrain_iters,
-                        counter_start, counter_end, num_src_samples, seed)
+                        counter_start, counter_end, num_src_samples, seed, device=device)
 
         self.input_max = input_max  # Maximum control input
         self.radius = radius  # Radius for boundary condition
@@ -585,7 +588,7 @@ class TripleIntegratorDataset(BaseReachabilityDataset):
     def __init__(self, numpoints, tMin=0.0, tMax=1.0, 
                  input_max=1.0, pretrain=False, pretrain_iters=2000, 
                  counter_start=0, counter_end=100e3, 
-                 num_src_samples=1000, seed=0, radius=0.25):
+                 num_src_samples=1000, seed=0, radius=0.25, device=None):
         """
         Initialize the Triple Integrator dataset.
 
@@ -601,9 +604,10 @@ class TripleIntegratorDataset(BaseReachabilityDataset):
             num_src_samples (int): Number of initial source samples.
             seed (int): Random seed for reproducibility.
             radius (float): Radius for boundary value computation.
+            device (torch.device): Device to store tensors (CPU or GPU).
         """
         super().__init__(numpoints, tMin, tMax, pretrain, pretrain_iters,
-                        counter_start, counter_end, num_src_samples, seed)
+                        counter_start, counter_end, num_src_samples, seed, device=device)
 
         self.input_max = input_max  # Maximum jerk input
         self.radius = radius
