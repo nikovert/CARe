@@ -10,6 +10,7 @@ class HJILossFunction(ABC):
         self.minWith = minWith
         self.reachMode = reachMode
         self.reachAim = reachAim
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def compute_loss(self, model_output, gt):
         """Template method that implements the common loss computation pattern."""
@@ -18,6 +19,12 @@ class HJILossFunction(ABC):
         y = model_output['model_out']
         dirichlet_mask = gt['dirichlet_mask']
         batch_size = x.shape[1]
+
+        # Ensure tensors are on the correct device
+        source_boundary_values = source_boundary_values.to(self.device)
+        x = x.to(self.device)
+        y = y.to(self.device)
+        dirichlet_mask = dirichlet_mask.to(self.device)
 
         du, _ = operators.jacobian(y, x)
         dudt = du[..., 0, 0]

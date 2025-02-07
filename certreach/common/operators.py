@@ -27,9 +27,10 @@ def laplace(y, x):
     return divergence(grad, x)
 
 def divergence(y, x):
-    div = 0.
+    device = x.device
+    div = torch.zeros(y.shape[:-1], device=device)
     for i in range(y.shape[-1]):
-        div += grad(y[..., i], x, torch.ones_like(y[..., i]), create_graph=True)[0][..., i:i+1]
+        div += grad(y[..., i], x, torch.ones_like(y[..., i], device=device), create_graph=True)[0][..., i:i+1]
     return div
 
 def gradient(y, x, grad_outputs=None):

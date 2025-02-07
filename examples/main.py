@@ -6,6 +6,7 @@ import atexit
 import multiprocessing
 import logging
 from examples.log import configure_logging
+import torch
 
 def parse_args():
     """Parse command line arguments."""
@@ -61,6 +62,10 @@ def parse_args():
     p.add_argument('--epsilon_radius', type=float, default=0.1)
     p.add_argument('--max_iterations', type=int, default=5)
     
+    # Add device argument
+    p.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
+                  help='Device to use for computation (cuda/cpu)')
+    
     return p.parse_args()
 
 def cleanup():
@@ -83,8 +88,11 @@ def main():
     logger.info(f"Starting experiment with example: {args.example}")
     logger.debug(f"Arguments: {args}")
 
-    # Create example
+    # Create example with explicit device
+    device = torch.device(args.device)
     example = create_example(args.example, args)
+    example.device = device  # Ensure device is set
+    logger.info(f"Using device: {device}")
     
     # Run based on mode
     if args.run_mode in ['train', 'all']:

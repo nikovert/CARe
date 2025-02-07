@@ -32,6 +32,7 @@ class DoubleIntegrator:
         self.args = args
         self.root_path = get_experiment_folder(args.logging_root, self.Name)
         self.logger = logging.getLogger(__name__)
+        self.device = torch.device(args.device)
         
         # Initialize model and other components only when needed
         self.model = None
@@ -51,7 +52,8 @@ class DoubleIntegrator:
                 counter_start=self.args.counter_start,
                 counter_end=self.args.counter_end,
                 num_src_samples=self.args.num_src_samples,
-                seed=self.args.seed
+                seed=self.args.seed,
+                device=self.device
             )
 
         if self.model is None:
@@ -64,7 +66,7 @@ class DoubleIntegrator:
                 num_hidden_layers=self.args.num_hl,
                 use_polynomial=self.args.use_polynomial,
                 poly_degree=self.args.poly_degree
-            ).cuda()
+            ).to(self.device)
 
         if self.loss_fn is None:
             self.loss_fn = initialize_loss(
@@ -84,7 +86,7 @@ class DoubleIntegrator:
             self.dataset,
             batch_size=self.args.batch_size,
             shuffle=True,
-            pin_memory=True
+            pin_memory=False  # Changed to False since data is already on device
         )
 
         self.logger.info("Starting model training")
@@ -113,7 +115,6 @@ class DoubleIntegrator:
     def verify(self):
         """Verify the trained model using dReal"""
         self.logger.info("Starting model verification")
-        self.logger.debug("Moving model to CPU for verification")
         self.model = self.model.cpu()
         
         self.logger.info("Extracting symbolic model")
@@ -159,7 +160,7 @@ class DoubleIntegrator:
             velocities = V.reshape(-1, 1)
             time_coords = torch.ones_like(positions) * t
 
-            coords = torch.cat((time_coords, positions, velocities), dim=1).cuda()
+            coords = torch.cat((time_coords, positions, velocities), dim=1).to(self.device)
             model_in = {'coords': coords}
             model_out = model(model_in)['model_out'].detach().cpu().numpy()
             model_out = model_out.reshape(X.shape)
