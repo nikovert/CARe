@@ -38,7 +38,7 @@ class DoubleIntegrator:
         self.root_path = get_experiment_folder(args.logging_root, self.Name)
         self.logger = logging.getLogger(__name__)
         self.device = torch.device(args.device)
-        
+                
         # Initialize model and other components only when needed
         self.model = None
         self.dataset = None
@@ -47,38 +47,10 @@ class DoubleIntegrator:
 
     def initialize_components(self, counterexample: Optional[torch.Tensor] = None):
         """Initialize dataset, model, and loss function"""
-        if self.dataset is None and counterexample is None:
+        # Initialize dataset if it doesn't exist
+        if self.dataset is None:
             self.dataset = ReachabilityDataset(
-                    numpoints=85000,
-                    tMin=self.args.tMin,
-                    tMax=self.args.tMax,
-                    pretrain=self.args.pretrain,
-                    pretrain_iters=self.args.pretrain_iters,
-                    counter_start=self.args.counter_start,
-                    counter_end=self.args.counter_end,
-                    num_src_samples=self.args.num_src_samples,
-                    seed=self.args.seed,
-                    device=self.device,
-                    num_states=2,  # [position, velocity]
-                    compute_boundary_values=double_integrator_boundary
-                )
-        # Initialize or update dataset with counterexample
-        elif counterexample is not None:
-            if not isinstance(counterexample, torch.Tensor):
-                raise TypeError("counterexample must be a torch.Tensor")
-            
-            # Ensure counterexample has correct shape [N, 3] where 3 = [time, position, velocity]
-            if counterexample.dim() == 1:
-                counterexample = counterexample.unsqueeze(0)  # Add batch dimension if missing
-            
-            if counterexample.size(1) == 2:  # If only [position, velocity] provided
-                # Add time dimension initialized to tMax (assuming worst-case scenario)
-                time_dim = torch.full((counterexample.size(0), 1), self.args.tMax, device=counterexample.device)
-                counterexample = torch.cat([time_dim, counterexample], dim=1)
-
-            # Create new dataset instance with counterexample using existing numpoints
-            self.dataset = ReachabilityDataset(
-                numpoints=85000,  # Use existing dataset's numpoints
+                numpoints=85000,
                 tMin=self.args.tMin,
                 tMax=self.args.tMax,
                 pretrain=self.args.pretrain,
@@ -88,11 +60,15 @@ class DoubleIntegrator:
                 num_src_samples=self.args.num_src_samples,
                 seed=self.args.seed,
                 device=self.device,
-                counterexample=counterexample,
                 num_states=2,  # [position, velocity]
                 compute_boundary_values=double_integrator_boundary
             )
+        
+        # Add counterexample if provided
+        if counterexample is not None:
+            self.dataset.add_counterexample(counterexample)
                
+        # Initialize model if needed
         if self.model is None:
             self.model = SingleBVPNet(
                 in_features=self.args.in_features,

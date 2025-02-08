@@ -13,7 +13,7 @@ class ReachabilityDataset(Dataset):
                  pretrain=False, pretrain_iters=2000,
                  counter_start=0, counter_end=100e3,
                  num_src_samples=1000, seed=0, device=None,
-                 counterexample=None, percentage_in_counterexample=20,
+                 counterexamples=None, percentage_in_counterexample=20,
                  percentage_at_t0=20, epsilon_radius=0.1,
                  num_states=None, compute_boundary_values=None):
         """
@@ -72,7 +72,7 @@ class ReachabilityDataset(Dataset):
             self.compute_boundary_values = compute_boundary_values
 
         # Counterexample parameters
-        self.counterexample = counterexample.to(self.device) if counterexample is not None else None
+        self.counterexamples = counterexamples.to(self.device) if counterexamples is not None else None
         self.percentage_in_counterexample = percentage_in_counterexample
         self.percentage_at_t0 = percentage_at_t0
         self.epsilon_radius = epsilon_radius
@@ -118,12 +118,12 @@ class ReachabilityDataset(Dataset):
         Returns:
             torch.Tensor: Sampled points of shape (num_points, num_states + 1)
         """
-        if self.counterexample is None:
+        if self.counterexamples is None:
             return None
             
-        counter_idx = torch.randint(0, self.counterexample.shape[0], (num_points,))
+        counter_idx = torch.randint(0, self.counterexamples.shape[0], (num_points,))
         # Create a new tensor that requires gradients
-        counter_points = self.counterexample[counter_idx].detach().clone()
+        counter_points = self.counterexamples[counter_idx].detach().clone()
         counter_points.requires_grad_(True)
         noise = torch.randn_like(counter_points) * self.epsilon_radius
         noise.requires_grad_(True)
@@ -152,7 +152,7 @@ class ReachabilityDataset(Dataset):
         # Calculate number of points for each category
         n_t0 = int(self.numpoints * self.percentage_at_t0 / 100)
         
-        if self.counterexample is not None:
+        if self.counterexamples is not None:
             n_counter = int(self.numpoints * self.percentage_in_counterexample / 100)
             n_random = self.numpoints - n_counter - n_t0
             
@@ -171,7 +171,7 @@ class ReachabilityDataset(Dataset):
         t0_coords = torch.cat([torch.zeros(n_t0, 1, device=self.device), t0_states], dim=1)
         
         # Combine all coordinates
-        if self.counterexample is not None:
+        if self.counterexamples is not None:
             coords = torch.cat([counter_coords, random_coords, t0_coords], dim=0)
         else:
             coords = torch.cat([random_coords, t0_coords], dim=0)
@@ -192,4 +192,30 @@ class ReachabilityDataset(Dataset):
             'source_boundary_values': boundary_values,
             'dirichlet_mask': dirichlet_mask
         }
+
+    def add_counterexample(self, counterexample: torch.Tensor):
+        """Add new counterexample points to the existing dataset.
+        
+        Args:
+            counterexample (torch.Tensor): New counterexample points [n, state_dim]
+        """
+        if not isinstance(counterexample, torch.Tensor):
+            raise TypeError("counterexample must be a torch.Tensor")
+        
+        # Ensure counterexample has correct shape
+        if counterexample.dim() == 1:
+            counterexample = counterexample.unsqueeze(0)
+        
+        if counterexample.size(1) == self.num_states:  # If only state variables provided
+            # Add time dimension initialized to tMax
+            time_dim = torch.full((counterexample.size(0), 1), self.tMax, device=self.device)
+            counterexample = torch.cat([time_dim, counterexample], dim=1)
+        
+        # Add to existing counterexample if it exists, otherwise create new
+        if self.counterexamples is None:
+            self.counterexamples = counterexample.to(self.device)
+        else:
+            self.counterexamples = torch.cat([self.counterexamples, counterexample.to(self.device)], dim=0)
+        
+        logger.debug(f"Added {counterexample.size(0)} counterexample points. Total: {self.counterexamples.size(0)}")
 
