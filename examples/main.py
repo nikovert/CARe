@@ -37,7 +37,7 @@ def parse_args():
     p.add_argument('--out_features', type=int, default=1)
     p.add_argument('--num_hl', type=int, default=0)
     p.add_argument('--num_nl', type=int, default=32)
-    p.add_argument('--use_polynomial', action='store_true', default=True)
+    p.add_argument('--use_polynomial', action='store_true', default=False)
     p.add_argument('--poly_degree', type=int, default=2)
 
     # System Specific Settings
@@ -79,10 +79,10 @@ def parse_args():
     if args.quick_mode:
         args.num_epochs = 10
         args.max_iterations = 2
-        args.epsilon = 0.5
+        args.epsilon = 0.35
         args.iterate = True
     elif args.full_mode:
-        args.num_epochs = 30000
+        args.num_epochs = 5000
         args.max_iterations = 10
         args.epsilon = 0.35
         args.iterate = True
@@ -93,6 +93,30 @@ def cleanup():
     """Cleanup function to handle multiprocessing resources"""
     if hasattr(multiprocessing, '_ctx') and hasattr(multiprocessing._ctx, '_semaphore_tracker'):
         multiprocessing._ctx._semaphore_tracker.clear()
+
+def load_model_safely(example, model_path, device):
+    """Helper function to safely load model state dict with compatibility checks"""
+    logger = logging.getLogger(__name__)
+    try:
+        # Load state dict
+        state_dict = torch.load(model_path, map_location=device)
+        
+        # Check if state dict needs processing
+        if isinstance(state_dict, dict):
+            # Remove 'module.' prefix if it exists (happens with DataParallel)
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                name = k.replace('module.', '') if k.startswith('module.') else k
+                new_state_dict[name] = v
+            state_dict = new_state_dict
+        
+        # Try loading the processed state dict
+        example.model.load_state_dict(state_dict, strict=False)
+        logger.info(f"Successfully loaded model from {model_path}")
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to load model: {str(e)}")
+        return False
 
 def main():
     # Register cleanup function
@@ -115,6 +139,21 @@ def main():
     example.device = device
     logger.info(f"Using device: {device}")
     
+    # Check for existing model when in quick mode
+    if args.run_mode in ['train', 'all']:
+        model_dir = os.path.join(args.logging_root, args.example)
+        final_model_path = os.path.join(model_dir, 'checkpoints', 'model_final.pth')
+        if os.path.exists(final_model_path):
+            example.initialize_components()
+            if load_model_safely(example, final_model_path, device):
+                if args.quick_mode:
+                    logger.info("Quick mode with existing model: Skipping training phase")
+                    args.run_mode = 'verify'
+            else:
+                logger.info("Will train from scratch")
+        else:
+            logger.info("No existing model found, will train from scratch")
+    
     # Run based on mode
     if args.run_mode in ['train', 'all']:
         logger.info("Starting training phase")
@@ -122,6 +161,22 @@ def main():
     
     if args.run_mode in ['verify', 'all']:
         logger.info("Starting verification phase")
+        # Ensure model is initialized before verification
+        if not hasattr(example, 'model') or example.model is None:
+            logger.info("Initializing model for verification")
+            example.initialize_components()
+            
+            # Try to load existing model
+            model_dir = os.path.join(args.logging_root, args.example)
+            final_model_path = os.path.join(model_dir, 'checkpoints', 'model_final.pth')
+            if os.path.exists(final_model_path):
+                if not load_model_safely(example, final_model_path, device):
+                    logger.error("Failed to load model for verification. Please check model compatibility.")
+                    return
+            else:
+                logger.error("No trained model found. Please train a model first.")
+                return
+
         if args.iterate:
             logger.info(f"Starting {'quick' if args.quick_mode else 'full'} CEGIS loop")
             logger.info(f"Parameters: epochs={args.num_epochs}, "

@@ -6,6 +6,7 @@ import torch
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from certreach.verification.verify import verify_system
+from copy import deepcopy
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class CEGISLoop:
         self.best_model_path = None
         self.best_model_state = None
         self.timing_history = []
+        self.current_symbolic_model = None
         
     @torch.no_grad()
     def run(self) -> CEGISResult:
@@ -48,13 +50,25 @@ class CEGISLoop:
         while iteration_count < self.max_iterations:
             logger.info(f"Starting iteration {iteration_count + 1} with epsilon: {self.current_epsilon}")
             
+            self.example.train()
+
+            # Create CPU clone with same architecture as original model
+            with torch.no_grad():
+                cpu_model = deepcopy(self.example.model)  # This preserves architecture
+                cpu_model.cpu()  # Move the clone to CPU
+            
             # Get verification result and timing info
-            verification_result, timing_info = verify_system(
-                model=self.example.model,
+            verification_result, timing_info, symbolic_model = verify_system(
+                model=cpu_model,
                 root_path=self.example.root_path,
                 system_type=self.example.Name,
-                epsilon=self.current_epsilon
+                epsilon=self.current_epsilon,
+                verification_fn=self.example.verification_fn,
+                symbolic_model=self.current_symbolic_model
             )
+            
+            # Store symbolic model for potential reuse
+            self.current_symbolic_model = symbolic_model
             
             # Store timing information
             self.timing_history.append(TimingStats(
@@ -63,57 +77,61 @@ class CEGISLoop:
                 verification_time=timing_info['verification_time']
             ))
             
-            result = self._process_verification_results()
+            counterexample = self._process_verification_results()
             
-            if not result.success:
-                break
+            if counterexample is None:
+                # Verification succeeded, try smaller epsilon
+                if self.current_epsilon < self.best_epsilon:
+                    self.best_epsilon = self.current_epsilon
+                    self.best_model_path = os.path.join(
+                        self.example.root_path, "checkpoints", "model_final.pth"
+                    )
+                    self.best_model_state = {
+                        k: v.clone() for k, v in self.example.model.state_dict().items()
+                    }
+                self.current_epsilon *= 0.5
+                self.args.epsilon = self.current_epsilon
+            else:
+                # Train on counterexample
+                train_start = time.time()
+                counterexample.requires_grad=True
+                self.example.train(counterexample=counterexample)
+                train_time = time.time() - train_start
+                self.example.last_training_time = train_time
+                self.current_symbolic_model = None  # Reset symbolic model after training
                 
             iteration_count += 1
         
         total_time = time.time() - start_time
         return self._finalize_results(total_time)
     
-    def _process_verification_results(self) -> CEGISResult:
-        """Process verification results."""
+    def _process_verification_results(self) -> Optional[torch.Tensor]:
+        """Process verification results and return counterexample if found."""
         dreal_result_path = f"{self.example.root_path}/dreal_result.json"
         with open(dreal_result_path, 'r') as f:
             result = json.load(f)
             
         if "HJB Equation Satisfied" in result["result"]:
-            return self._handle_success()
-        else:
-            return self._handle_counterexample(result)
-    
-    def _handle_success(self) -> CEGISResult:
-        """Handle successful verification with model state preservation."""
-        logger.info("HJB Equation satisfied. Reducing epsilon.")
+            logger.info("HJB Equation satisfied. Reducing epsilon.")
+            return None
+            
+        logger.info("Counterexample found. Will retrain model.")
+        # Extract counterexample points from the result string
+        counterexample_points = []
+        if "result" in result:
+            lines = result["result"].split('\n')
+            for line in lines:
+                if line.startswith('x_'):
+                    interval_str = line.split(':')[1].strip()[1:-1]
+                    lower, upper = map(float, interval_str.split(','))
+                    point = (lower + upper) / 2
+                    counterexample_points.append(point)
         
-        if self.current_epsilon < self.best_epsilon:
-            self.best_epsilon = self.current_epsilon
-            self.best_model_path = os.path.join(
-                self.example.root_path, "checkpoints", "model_final.pth"
-            )
-            self.best_model_state = {
-                k: v.clone() for k, v in self.example.model.state_dict().items()
-            }
+        if not counterexample_points:
+            logger.warning("No counterexample points found in dReal result")
+            return None
         
-        self.current_epsilon *= 0.9
-        self.args.epsilon = self.current_epsilon
-        return CEGISResult(epsilon=self.current_epsilon, success=True)
-    
-    def _handle_counterexample(self, result: Dict[str, Any]) -> CEGISResult:
-        """Handle counterexample with efficient device management."""
-        logger.info("Counterexample found. Retraining model.")
-        
-        # Time the training process
-        train_start = time.time()
-        self.example.train(counterexample=True)
-        train_time = time.time() - train_start
-        
-        # Store training time for this iteration
-        self.example.last_training_time = train_time
-        
-        return CEGISResult(epsilon=self.current_epsilon, success=True)
+        return torch.tensor(counterexample_points, device=self.device)
     
     def _finalize_results(self, total_time: float) -> CEGISResult:
         """Restore best model and generate final visualizations."""

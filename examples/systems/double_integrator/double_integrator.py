@@ -1,14 +1,13 @@
 import os
-import json
 import torch
 import logging
 import torch.multiprocessing as mp
+from typing import Optional
 import matplotlib
-matplotlib.use('Agg')  # Add this line before importing pyplot
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-
+from certreach.common.dataset import ReachabilityDataset
 from certreach.common.dataio import (
-    DoubleIntegratorDataset,
     get_experiment_folder,
     save_experiment_details
 )
@@ -16,16 +15,20 @@ from certreach.learning.training import train
 from certreach.learning.networks import SingleBVPNet
 from certreach.verification.symbolic import extract_symbolic_model
 from certreach.verification.dreal_utils import (
-    dreal_double_integrator_BRS,
     extract_dreal_partials,
-    process_dreal_result,
-    CounterexampleDataset
+    process_dreal_result
 )
 from certreach.verification.verify import verify_system
+from .verification import dreal_double_integrator_BRS
 from .loss import initialize_loss
 
 # Set multiprocessing start method
 mp.set_start_method('spawn', force=True)
+
+def double_integrator_boundary(coords):
+        pos = coords[:, 1:3]  # Extract [x, v]
+        boundary_values = torch.norm(pos, dim=1, keepdim=True)
+        return boundary_values - 0.25
 
 class DoubleIntegrator:
     Name = "double_integrator"
@@ -40,24 +43,56 @@ class DoubleIntegrator:
         self.model = None
         self.dataset = None
         self.loss_fn = None
+        self.verification_fn = dreal_double_integrator_BRS  # Add this line
 
-    def initialize_components(self):
+    def initialize_components(self, counterexample: Optional[torch.Tensor] = None):
         """Initialize dataset, model, and loss function"""
-        if self.dataset is None:
-            self.dataset = DoubleIntegratorDataset(
-                numpoints=85000,
+        if self.dataset is None and counterexample is None:
+            self.dataset = ReachabilityDataset(
+                    numpoints=85000,
+                    tMin=self.args.tMin,
+                    tMax=self.args.tMax,
+                    pretrain=self.args.pretrain,
+                    pretrain_iters=self.args.pretrain_iters,
+                    counter_start=self.args.counter_start,
+                    counter_end=self.args.counter_end,
+                    num_src_samples=self.args.num_src_samples,
+                    seed=self.args.seed,
+                    device=self.device,
+                    num_states=2,  # [position, velocity]
+                    compute_boundary_values=double_integrator_boundary
+                )
+        # Initialize or update dataset with counterexample
+        elif counterexample is not None:
+            if not isinstance(counterexample, torch.Tensor):
+                raise TypeError("counterexample must be a torch.Tensor")
+            
+            # Ensure counterexample has correct shape [N, 3] where 3 = [time, position, velocity]
+            if counterexample.dim() == 1:
+                counterexample = counterexample.unsqueeze(0)  # Add batch dimension if missing
+            
+            if counterexample.size(1) == 2:  # If only [position, velocity] provided
+                # Add time dimension initialized to tMax (assuming worst-case scenario)
+                time_dim = torch.full((counterexample.size(0), 1), self.args.tMax, device=counterexample.device)
+                counterexample = torch.cat([time_dim, counterexample], dim=1)
+
+            # Create new dataset instance with counterexample using existing numpoints
+            self.dataset = ReachabilityDataset(
+                numpoints=85000,  # Use existing dataset's numpoints
                 tMin=self.args.tMin,
                 tMax=self.args.tMax,
-                input_max=self.args.input_max,
                 pretrain=self.args.pretrain,
                 pretrain_iters=self.args.pretrain_iters,
                 counter_start=self.args.counter_start,
                 counter_end=self.args.counter_end,
                 num_src_samples=self.args.num_src_samples,
                 seed=self.args.seed,
-                device=self.device
+                device=self.device,
+                counterexample=counterexample,
+                num_states=2,  # [position, velocity]
+                compute_boundary_values=double_integrator_boundary
             )
-
+               
         if self.model is None:
             self.model = SingleBVPNet(
                 in_features=self.args.in_features,
@@ -71,49 +106,31 @@ class DoubleIntegrator:
             ).to(self.device)
 
         if self.loss_fn is None:
+            # Construct input bounds dictionary
+            input_bounds = {
+                'min': torch.tensor([-self.args.input_max]),  # Assuming symmetric bounds
+                'max': torch.tensor([self.args.input_max])
+            }
+            
             self.loss_fn = initialize_loss(
-                self.dataset,
+                self.device,
+                input_bounds=input_bounds,
                 minWith=self.args.minWith,
                 reachMode=self.args.reachMode,
                 reachAim=self.args.reachAim
             )
 
-    def train(self, counterexample=False):
+    def train(self, counterexample: Optional[torch.Tensor] = None):
         """Train the model with optional counterexample handling."""
-        self.logger.info("Initializing training components")
-        self.initialize_components()
+        self.logger.info("Initializing training")
+        self.initialize_components(counterexample)
         
-        if counterexample:
-            self.logger.info("Creating counterexample dataset")
-            try:
-                # Load latest dReal results
-                with open(f"{self.root_path}/dreal_result.json", 'r') as f:
-                    result = json.load(f)
-                    
-                if "result" in result and result["result"] != "HJB Equation Satisfied":
-                    counterexample = result.get("counterexample")
-                    if counterexample:
-                        self.dataset = CounterexampleDataset(
-                            counterexample=counterexample,
-                            numpoints=10000,
-                            percentage_in_counterexample=20,
-                            percentage_at_t0=20,
-                            tMin=self.args.tMin,
-                            tMax=self.args.tMax,
-                            input_max=self.args.input_max,
-                            epsilon_radius=self.args.epsilon_radius,
-                            device=self.device
-                        )
-            except Exception as e:
-                self.logger.error(f"Failed to create counterexample dataset: {str(e)}")
-                raise
-        
-        # Setup data loader with proper CUDA options
+        # Setup data loader and continue with training
         dataloader = torch.utils.data.DataLoader(
             self.dataset,
             batch_size=self.args.batch_size,
             shuffle=True,
-            pin_memory=False  # Changed to False since data is already on device
+            pin_memory=False
         )
         
         self.logger.info("Starting model training")

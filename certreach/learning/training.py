@@ -1,6 +1,3 @@
-'''Implements a generic training loop.
-'''
-
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
@@ -105,17 +102,19 @@ def train(model: torch.nn.Module,
                 if use_lbfgs:
                     def closure():
                         optim.zero_grad()
+                        model_input['coords'].requires_grad_(True)  # Ensure gradients
                         model_output = model(model_input)
                         losses = loss_fn(model_output, gt)
                         train_loss = sum(loss.mean() for loss in losses.values())
                         train_loss.backward()
                         return train_loss
                     optim.step(closure)
+                else:
+                    model_input['coords'].requires_grad_(True)  # Ensure gradients
+                    model_output = model(model_input)
+                    losses = loss_fn(model_output, gt)
 
-                model_output = model(model_input)
-                losses = loss_fn(model_output, gt)
-
-                train_loss = sum(loss.mean() for loss in losses.values())
+                    train_loss = sum(loss.mean() for loss in losses.values())
 
                 for loss_name, loss in losses.items():
                     single_loss = loss.mean()

@@ -18,5 +18,6 @@ class Air3DLoss(HJILossFunction):
         ham = ham + (self.velocity * (torch.cos(x_theta) - 1.0) * dudx[..., 0]) + (self.velocity * torch.sin(x_theta) * dudx[..., 1])
         return ham
 
-def initialize_loss(dataset, minWith='none'):
-    return Air3DLoss(dataset, minWith).compute_loss
+def initialize_loss(dataset, minWith="none", reachMode="forward", reachAim="reach"):
+    """Initialize loss function for Air3D system"""
+    return Air3DLoss(dataset, minWith, reachMode, reachAim)
