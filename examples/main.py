@@ -189,7 +189,7 @@ def main():
             if result.success:
                 logger.info(f"CEGIS completed. Best epsilon: {result.epsilon}")
             else:
-                logger.error(f"CEGIS failed: {result.error_msg}")
+                logger.info(f"CEGIS failed to find a valid epsilon value. Best attempt: {result.epsilon}")
         else:
             example.verify()
             # Plot results with current epsilon

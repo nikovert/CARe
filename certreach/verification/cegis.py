@@ -41,7 +41,6 @@ class CEGISLoop:
         self.timing_history = []
         self.current_symbolic_model = None
         
-    @torch.no_grad()
     def run(self) -> CEGISResult:
         """Run the CEGIS loop with proper CUDA memory management."""
         iteration_count = 0
@@ -50,22 +49,20 @@ class CEGISLoop:
         while iteration_count < self.max_iterations:
             logger.info(f"Starting iteration {iteration_count + 1} with epsilon: {self.current_epsilon}")
             
-            self.example.train()
-
-            # Create CPU clone with same architecture as original model
+            # Only disable gradients for verification
             with torch.no_grad():
                 cpu_model = deepcopy(self.example.model)  # This preserves architecture
                 cpu_model.cpu()  # Move the clone to CPU
             
-            # Get verification result and timing info
-            verification_result, timing_info, symbolic_model = verify_system(
-                model=cpu_model,
-                root_path=self.example.root_path,
-                system_type=self.example.Name,
-                epsilon=self.current_epsilon,
-                verification_fn=self.example.verification_fn,
-                symbolic_model=self.current_symbolic_model
-            )
+                # Get verification result and timing info
+                verification_result, timing_info, symbolic_model = verify_system(
+                    model=cpu_model,
+                    root_path=self.example.root_path,
+                    system_type=self.example.Name,
+                    epsilon=self.current_epsilon,
+                    verification_fn=self.example.verification_fn,
+                    symbolic_model=self.current_symbolic_model
+                )
             
             # Store symbolic model for potential reuse
             self.current_symbolic_model = symbolic_model
@@ -81,20 +78,20 @@ class CEGISLoop:
             
             if counterexample is None:
                 # Verification succeeded, try smaller epsilon
-                if self.current_epsilon < self.best_epsilon:
-                    self.best_epsilon = self.current_epsilon
-                    self.best_model_path = os.path.join(
-                        self.example.root_path, "checkpoints", "model_final.pth"
-                    )
-                    self.best_model_state = {
-                        k: v.clone() for k, v in self.example.model.state_dict().items()
-                    }
-                self.current_epsilon *= 0.5
-                self.args.epsilon = self.current_epsilon
+                with torch.no_grad():  # No gradients needed for model state saving
+                    if self.current_epsilon < self.best_epsilon:
+                        self.best_epsilon = self.current_epsilon
+                        self.best_model_path = os.path.join(
+                            self.example.root_path, "checkpoints", "model_final.pth"
+                        )
+                        self.best_model_state = {
+                            k: v.clone() for k, v in self.example.model.state_dict().items()
+                        }
+                    self.current_epsilon *= 0.5
+                    self.args.epsilon = self.current_epsilon
             else:
                 # Train on counterexample
                 train_start = time.time()
-                counterexample.requires_grad=True
                 self.example.train(counterexample=counterexample)
                 train_time = time.time() - train_start
                 self.example.last_training_time = train_time
