@@ -16,8 +16,8 @@ def parse_args():
     # Required arguments
     p.add_argument('--example', type=str, required=True, choices=EXAMPLE_NAMES,
                        help='Name of the example to run')
-    p.add_argument('--run_mode', type=str, required=True, choices=['train', 'verify', 'all'],
-                       help='Mode to run: train, verify, or all (both)')
+    p.add_argument('--run_mode', type=str, required=True, choices=['train', 'verify', 'cegis'],
+                       help='Mode to run: train, verify, or cegis')
     
     # Logging and Experiment Settings
     p.add_argument('--logging_root', type=str, default='./logs', help='Root directory for logging.')
@@ -59,7 +59,6 @@ def parse_args():
 
     # Verification Settings
     p.add_argument('--epsilon', type=float, default=0.35)
-    p.add_argument('--iterate', type=bool, default=False)
     p.add_argument('--epsilon_radius', type=float, default=0.1)
     p.add_argument('--max_iterations', type=int, default=5)
     
@@ -80,12 +79,10 @@ def parse_args():
         args.num_epochs = 10
         args.max_iterations = 2
         args.epsilon = 0.35
-        args.iterate = True
     elif args.full_mode:
         args.num_epochs = 5000
         args.max_iterations = 10
         args.epsilon = 0.35
-        args.iterate = True
 
     return args
 
@@ -139,8 +136,8 @@ def main():
     example.device = device
     logger.info(f"Using device: {device}")
     
-    # Check for existing model when in quick mode
-    if args.run_mode in ['train', 'all']:
+    # Check for existing model when in training mode
+    if args.run_mode == 'train':
         model_dir = os.path.join(args.logging_root, args.example)
         final_model_path = os.path.join(model_dir, 'checkpoints', 'model_final.pth')
         if os.path.exists(final_model_path):
@@ -155,15 +152,14 @@ def main():
             logger.info("No existing model found, will train from scratch")
     
     # Run based on mode
-    if args.run_mode in ['train', 'all']:
+    if args.run_mode == 'train':
         logger.info("Starting training phase")
         example.train()
     
-    if args.run_mode in ['verify', 'all']:
+    if args.run_mode == 'verify':
         logger.info("Starting verification phase")
         # Ensure model is initialized before verification
         if not hasattr(example, 'model') or example.model is None:
-            logger.info("Initializing model for verification")
             example.initialize_components()
             
             # Try to load existing model
@@ -177,32 +173,49 @@ def main():
                 logger.error("No trained model found. Please train a model first.")
                 return
 
-        if args.iterate:
-            logger.info(f"Starting {'quick' if args.quick_mode else 'full'} CEGIS loop")
-            logger.info(f"Parameters: epochs={args.num_epochs}, "
-                       f"max_iterations={args.max_iterations}, "
-                       f"epsilon={args.epsilon}")
-            
-            cegis = CEGISLoop(example, args)
-            result = cegis.run()
-            
-            if result.success:
-                logger.info(f"CEGIS completed. Best epsilon: {result.epsilon}")
+        example.verify()
+        # Plot results with current epsilon
+        dreal_result_path = f"{example.root_path}/dreal_result.json"
+        if os.path.exists(dreal_result_path):
+            try:
+                with open(dreal_result_path, 'r') as f:
+                    dreal_result = json.load(f)
+                    epsilon = dreal_result.get("epsilon", args.epsilon)
+                logger.info(f"Using epsilon value: {epsilon} from dReal results")
+                example.plot_final_model(example.model, example.root_path, epsilon)
+            except Exception as e:
+                logger.error(f"Error processing dReal results: {str(e)}")
+
+    if args.run_mode == 'cegis':
+        logger.info("Starting CEGIS phase")
+        # Initialize model if needed
+        if not hasattr(example, 'model') or example.model is None:
+            example.initialize_components()
+            model_dir = os.path.join(args.logging_root, args.example)
+            final_model_path = os.path.join(model_dir, 'checkpoints', 'model_final.pth')
+            if os.path.exists(final_model_path):
+                if not load_model_safely(example, final_model_path, device):
+                    logger.info("Failed to load existing model, creating new one")
             else:
-                logger.info(f"CEGIS failed to find a valid epsilon value. Best attempt: {result.epsilon}")
+                logger.info("No existing model found, creating new one")
+            
+            # Model will be used as is, whether newly initialized or loaded
+
+        logger.info(f"Starting {'quick' if args.quick_mode else 'full'} CEGIS loop")
+        logger.info(f"Parameters: epochs={args.num_epochs}, "
+                   f"max_iterations={args.max_iterations}, "
+                   f"epsilon={args.epsilon}")
+        
+        cegis = CEGISLoop(example, args)
+        result = cegis.run()
+        
+        # Plot results after successful CEGIS
+        example.plot_final_model(example.model, example.root_path, result.epsilon)
+        
+        if result.success:
+            logger.info(f"CEGIS completed. Best epsilon: {result.epsilon}")
         else:
-            example.verify()
-            # Plot results with current epsilon
-            dreal_result_path = f"{example.root_path}/dreal_result.json"
-            if os.path.exists(dreal_result_path):
-                try:
-                    with open(dreal_result_path, 'r') as f:
-                        dreal_result = json.load(f)
-                        epsilon = dreal_result.get("epsilon", args.epsilon)
-                    logger.info(f"Using epsilon value: {epsilon} from dReal results")
-                    example.plot_final_model(example.model, example.root_path, epsilon)
-                except Exception as e:
-                    logger.error(f"Error processing dReal results: {str(e)}")
+            logger.info(f"CEGIS failed to find a valid epsilon value. Best attempt: {result.epsilon}")
 
     logger.info("Experiment completed")
 

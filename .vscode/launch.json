@@ -30,8 +30,7 @@
             "args": [
                 "--example", "double_integrator",
                 "--run_mode", "verify",
-                "--logging_root", "./logs",
-                "--iterate", "false"
+                "--logging_root", "./logs"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -46,7 +45,7 @@
             "program": "${workspaceFolder}/examples/main.py",
             "args": [
                 "--example", "double_integrator",
-                "--run_mode", "all",
+                "--run_mode", "cegis",
                 "--logging_root", "./logs",
                 "--model_type", "sine",
                 "--model_mode", "mlp",
@@ -59,17 +58,16 @@
             }
         },
         {
-            "name": "Full Training with CEGIS",
+            "name": "CEGIS Double Integrator",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/examples/main.py",
             "args": [
                 "--example", "double_integrator",
-                "--run_mode", "all",
+                "--run_mode", "cegis",
                 "--logging_root", "./logs",
-                "--model_type", "sine",
-                "--model_mode", "mlp",
-                "--full_mode"
+                "--epsilon", "0.35",
+                "--max_iterations", "10"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
