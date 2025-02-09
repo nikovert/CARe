@@ -1,7 +1,7 @@
 import torch
-import numpy as np
 from collections import OrderedDict
 import math
+from pathlib import Path
 
 def set_known_weights_and_print(model):
     """
@@ -61,7 +61,6 @@ def set_known_weights_and_print(model):
         print("-" * 50)
 
     return weights_and_biases
-
 
 class BatchLinear(torch.nn.Linear):
     '''A linear layer'''
@@ -190,15 +189,158 @@ class FCBlock(torch.nn.Module):
 class SingleBVPNet(torch.nn.Module):
     '''A canonical representation network for a BVP.'''
 
-    def __init__(self, out_features=1, type='sine', in_features=2,
-                 mode='mlp', hidden_features=32, num_hidden_layers=3,
-                 use_polynomial = False, poly_degree = 2, **kwargs):
+    def __init__(self, 
+out_features: int = 1,
+type: str = 'sine',
+in_features=2,
+                 mode='mlp', 
+hidden_features=32, 
+num_hidden_layers=3,
+                 use_polynomial=False, 
+poly_degree=2, 
+**kwargs) -> None:
         super().__init__()
         self.mode = mode
-        self.net = FCBlock(in_features=in_features, out_features=out_features, num_hidden_layers=num_hidden_layers,
-                           hidden_features=hidden_features, outermost_linear=True, nonlinearity=type, 
-                           use_polynomial = use_polynomial, poly_degree=poly_degree)
+        self.in_features = in_features
+        self.out_features = out_features
+        self.hidden_features = hidden_features
+        self.num_hidden_layers = num_hidden_layers
+        self.activation_type = type
+        self.use_polynomial = use_polynomial
+        self.poly_degree = poly_degree
+        
+        self.net = FCBlock(in_features=in_features, out_features=out_features, 
+                          num_hidden_layers=num_hidden_layers,
+                          hidden_features=hidden_features, outermost_linear=True, 
+                          nonlinearity=type, use_polynomial=use_polynomial, 
+                          poly_degree=poly_degree)
         print(self)
+        self._checkpoint_dir = None
+
+    @property
+    def checkpoint_dir(self):
+        """Get the checkpoint directory"""
+        return self._checkpoint_dir
+
+    @checkpoint_dir.setter
+    def checkpoint_dir(self, path):
+        """Set the checkpoint directory"""
+        self._checkpoint_dir = Path(path)
+        self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    def save_checkpoint(self, name, optimizer=None, epoch=None, **kwargs):
+        """Save checkpoint with specified name in the model's checkpoint directory"""
+        if self._checkpoint_dir is None:
+            raise ValueError("Checkpoint directory not set. Set model.checkpoint_dir first.")
+            
+        path = self._checkpoint_dir / f"{name}.pth"
+        self._save_checkpoint_file(path, optimizer=optimizer, epoch=epoch, **kwargs)
+        return path
+
+    def _save_checkpoint_file(self, path, optimizer=None, epoch=None, **kwargs):
+        """Internal method to save checkpoint to a specific file"""
+        checkpoint = {
+            'model_state_dict': self.state_dict(),
+            'model_config': self.get_config(),
+            **kwargs
+        }
+        
+        if optimizer is not None:
+            checkpoint['optimizer_state_dict'] = optimizer.state_dict()
+        if epoch is not None:
+            checkpoint['epoch'] = epoch
+            
+        torch.save(checkpoint, path)
+
+    def get_config(self):
+        """Return model configuration for reconstruction"""
+        return {
+            'mode': self.mode,
+            'in_features': self.in_features,
+            'out_features': self.out_features,
+            'hidden_features': self.hidden_features,
+            'num_hidden_layers': self.num_hidden_layers,
+            'type': self.activation_type,
+            'use_polynomial': self.use_polynomial,
+            'poly_degree': self.poly_degree
+        }
+
+    @staticmethod
+    def load_checkpoint(path, device='cpu', eval_mode=True):
+        """
+        Load model checkpoint with proper evaluation mode setting
+        
+        Args:
+            path (str): Path to checkpoint file
+            device (str): Device to load model to ('cpu' or 'cuda')
+            eval_mode (bool): Whether to set model to evaluation mode
+            
+        Returns:
+            tuple: (model, checkpoint_dict)
+        """
+        try:
+            checkpoint = torch.load(path, map_location=device)
+            
+            # Set default configuration
+            default_config = {
+                'mode': 'mlp',
+                'type': 'sine',
+                'use_polynomial': False,
+                'poly_degree': 2
+            }
+            
+            if 'model_config' not in checkpoint:
+                # Infer configuration from state dict
+                state_dict = checkpoint['model_state_dict']
+                input_layer = next(key for key in state_dict.keys() if 'net.0.0.weight' in key)
+                output_layer = next(key for key in state_dict.keys() if key.endswith('.weight'))
+                
+                in_features = state_dict[input_layer].shape[1]
+                out_features = state_dict[output_layer].shape[0]
+                hidden_features = state_dict[input_layer].shape[0]
+                
+                # Count hidden layers by counting unique layer indices in state dict
+                layer_indices = set()
+                for key in state_dict.keys():
+                    if '.weight' in key:
+                        layer_idx = int(key.split('.')[1])
+                        layer_indices.add(layer_idx)
+                num_hidden_layers = len(layer_indices) - 2  # subtract input and output layers
+                
+                model_config = {
+                    **default_config,
+                    'in_features': in_features,
+                    'out_features': out_features,
+                    'hidden_features': hidden_features,
+                    'num_hidden_layers': max(0, num_hidden_layers)
+                }
+            else:
+                model_config = {**default_config, **checkpoint['model_config']}
+            
+            # Create and configure model
+            model = SingleBVPNet(**model_config)
+            model.to(device)
+            model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+            
+            if eval_mode:
+                model.eval()
+            
+            return model, checkpoint
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to load checkpoint: {str(e)}")
+
+    def load_weights(self, state_dict, eval_mode=True):
+        """
+        Load just the model weights
+        
+        Args:
+            state_dict (dict): Model state dictionary
+            eval_mode (bool): Whether to set model to evaluation mode
+        """
+        self.load_state_dict(state_dict, strict=True)
+        if eval_mode:
+            self.eval()
 
     def forward(self, model_input, params=None):
         if params is None:
@@ -285,7 +427,8 @@ def sine_init(m):
         if hasattr(m, 'weight'):
             num_input = m.weight.size(-1)
             # See supplement Sec. 1.5 for discussion of factor 30
-            m.weight.uniform_(-np.sqrt(6 / num_input) / 30, np.sqrt(6 / num_input) / 30)
+            bound = torch.sqrt(torch.tensor(6.0 / num_input)) / 30
+            m.weight.uniform_(-bound, bound)
 
 def first_layer_sine_init(m):
     with torch.no_grad():
@@ -293,3 +436,4 @@ def first_layer_sine_init(m):
             num_input = m.weight.size(-1)
             # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
             m.weight.uniform_(-1 / num_input, 1 / num_input)
+

@@ -7,10 +7,6 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from certreach.common.dataset import ReachabilityDataset
-from certreach.common.dataio import (
-    get_experiment_folder,
-    save_experiment_details
-)
 from certreach.learning.training import train
 from certreach.learning.networks import SingleBVPNet
 from certreach.verification.symbolic import extract_symbolic_model
@@ -21,6 +17,8 @@ from certreach.verification.dreal_utils import (
 from certreach.verification.verify import verify_system
 from .verification import dreal_double_integrator_BRS
 from .loss import initialize_loss
+from examples.utils.experiment_utils import get_experiment_folder, save_experiment_details
+from examples.factories import register_example
 
 # Set multiprocessing start method
 mp.set_start_method('spawn', force=True)
@@ -30,6 +28,7 @@ def double_integrator_boundary(coords):
         boundary_values = torch.norm(pos, dim=1, keepdim=True)
         return boundary_values - 0.25
 
+@register_example
 class DoubleIntegrator:
     Name = "double_integrator"
 
@@ -214,12 +213,3 @@ class DoubleIntegrator:
         plt.savefig(save_path)
         plt.close(fig)
         self.logger.debug(f"Saved comparison plot at: {save_path}")
-
-    def load_model(self, model_path):
-        """Load a model with proper device handling."""
-        if self.model is None:
-            self.initialize_components()
-        
-        state_dict = torch.load(model_path, map_location=self.device)
-        self.model.load_state_dict(state_dict)
-        self.model.to(self.device)

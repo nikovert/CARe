@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import logging
 from typing import Callable, Optional, Dict
+from torch.cuda.amp import autocast, GradScaler
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +27,15 @@ def train(model: torch.nn.Module,
           loss_schedules: Optional[Dict[str, Callable]] = None, 
           validation_fn: Optional[Callable] = None, 
           start_epoch: int = 0,
-          device: Optional[torch.device] = None) -> None:
+          device: Optional[torch.device] = None,
+          use_amp: bool = True) -> None:
 
     # Use provided device or default to CUDA if available
     device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
+    
+    # Initialize gradient scaler for AMP without device_type
+    scaler = torch.GradScaler() if use_amp and device.type == 'cuda' else None
 
     optim = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -59,11 +64,14 @@ def train(model: torch.nn.Module,
             shutil.rmtree(model_dir)
         Path(model_dir).mkdir(parents=True, exist_ok=True)
 
-    summaries_dir = Path(model_dir) / 'summaries'
-    summaries_dir.mkdir(parents=True, exist_ok=True)
+    # Make sure all path operations use Path consistently
+    model_dir = Path(model_dir)
+    summaries_dir = model_dir / 'summaries'
+    checkpoints_dir = model_dir / 'checkpoints'
 
-    checkpoints_dir = Path(model_dir) / 'checkpoints'
+    summaries_dir.mkdir(parents=True, exist_ok=True)
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    model.checkpoint_dir = checkpoints_dir  # Set checkpoint directory for model
 
     writer = SummaryWriter(summaries_dir)
 
@@ -72,15 +80,18 @@ def train(model: torch.nn.Module,
         train_losses = []
         for epoch in range(start_epoch, epochs):
             if epoch % epochs_til_checkpoint == 0 and epoch > 0:
-                # Saving the optimizer state is important to produce consistent results
-                checkpoint = { 
-                    'epoch': epoch,
-                    'model': model.state_dict(),
-                    'optimizer': optim.state_dict()}
-                torch.save(checkpoint,
-                           checkpoints_dir / f'model_epoch_{epoch:04d}.pth')
+                # Save periodic checkpoint using model's method
+                model.save_checkpoint(
+                    name=f'model_epoch_{epoch:04d}',
+                    optimizer=optim,
+                    epoch=epoch,
+                    train_losses=train_losses
+                )
+                
+                # Save losses separately for analysis
                 np.savetxt(checkpoints_dir / f'train_losses_epoch_{epoch:04d}.txt',
-                           np.array(train_losses))
+                          np.array(train_losses))
+
                 if validation_fn is not None:
                     validation_fn(model, checkpoints_dir, epoch)
 
@@ -88,12 +99,8 @@ def train(model: torch.nn.Module,
                 start_time = time.time()
             
                 # Move data to device after loading, handling CPU pinned memory correctly
-                if device.type == 'cuda':
-                    model_input = {key: value.cuda(non_blocking=True) for key, value in model_input.items()}
-                    gt = {key: value.cuda(non_blocking=True) for key, value in gt.items()}
-                else:
-                    model_input = {key: value.to(device) for key, value in model_input.items()}
-                    gt = {key: value.to(device) for key, value in gt.items()}
+                model_input = {key: value.to(device, non_blocking=True) for key, value in model_input.items()}
+                gt = {key: value.to(device, non_blocking=True) for key, value in gt.items()}
 
                 if double_precision:
                     model_input = {key: value.double() for key, value in model_input.items()}
@@ -110,11 +117,15 @@ def train(model: torch.nn.Module,
                         return train_loss
                     optim.step(closure)
                 else:
-                    model_input['coords'].requires_grad_(True)  # Ensure gradients
-                    model_output = model(model_input)
-                    losses = loss_fn(model_output, gt)
+                    optim.zero_grad(set_to_none=True)  # More efficient than zero_grad()
+                    
+                    # Updated autocast context manager
+                    with torch.autocast(device.type, enabled=use_amp):
+                        model_input['coords'].requires_grad_(True)  # Ensure gradients
+                        model_output = model(model_input)
+                        losses = loss_fn(model_output, gt)
 
-                    train_loss = sum(loss.mean() for loss in losses.values())
+                        train_loss = sum(loss.mean() for loss in losses.values())
 
                 for loss_name, loss in losses.items():
                     single_loss = loss.mean()
@@ -127,16 +138,25 @@ def train(model: torch.nn.Module,
                 writer.add_scalar("total_train_loss", train_loss, total_steps)
 
                 if total_steps % steps_til_summary == 0:
-                    torch.save(model.state_dict(), checkpoints_dir / 'model_current.pth')
+                    # Save current state
+                    model.save_checkpoint(
+                        name='model_current',
+                        optimizer=optim,
+                        epoch=epoch,
+                        step=total_steps
+                    )
 
-                if not use_lbfgs:
-                    optim.zero_grad()
-                    train_loss.backward()
-
+                if scaler is not None:
+                    scaler.scale(train_loss).backward()
                     if clip_grad:
-                        max_norm = 1. if isinstance(clip_grad, bool) else clip_grad
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
-
+                        scaler.unscale_(optim)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    scaler.step(optim)
+                    scaler.update()
+                else:
+                    train_loss.backward()
+                    if clip_grad:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optim.step()
 
                 pbar.update(1)
@@ -147,15 +167,34 @@ def train(model: torch.nn.Module,
                     if val_dataloader:
                         logger.info("Running validation set...")
                         model.eval()
-                        with torch.no_grad():
-                            val_losses = [loss_fn(model(model_input), gt) for model_input, gt in val_dataloader]
-                            writer.add_scalar("val_loss", np.mean(val_losses), total_steps)
+                        val_losses = []
+                        # Updated autocast for validation
+                        with torch.no_grad(), torch.autocast(device.type, enabled=use_amp):
+                            for val_input, val_gt in val_dataloader:
+                                val_input = {k: v.to(device, non_blocking=True) for k, v in val_input.items()}
+                                val_gt = {k: v.to(device, non_blocking=True) for k, v in val_gt.items()}
+                                val_output = model(val_input)
+                                val_batch_losses = loss_fn(val_output, val_gt)
+                                val_losses.append(sum(loss.mean() for loss in val_batch_losses.values()))
+                            
+                            avg_val_loss = torch.stack(val_losses).mean()
+                            writer.add_scalar("val_loss", avg_val_loss.item(), total_steps)
                         model.train()
 
                 total_steps += 1
 
-        torch.save(model.state_dict(), checkpoints_dir / 'model_final.pth')
-        np.savetxt(checkpoints_dir / 'train_losses_final.txt', np.array(train_losses))
+        # Save final model
+        model.save_checkpoint(
+            name='model_final',
+            optimizer=optim,
+            epoch=epochs,
+            train_losses=train_losses,
+            training_completed=True
+        )
+
+        # Save final losses
+        np.savetxt(checkpoints_dir / 'train_losses_final.txt', 
+                   np.array(train_losses))
 
 
 class LinearDecaySchedule:

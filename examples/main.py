@@ -1,5 +1,4 @@
 import configargparse
-from examples.factories import create_example, EXAMPLE_NAMES
 import json
 import os
 import atexit
@@ -8,6 +7,8 @@ import logging
 from examples.log import configure_logging
 import torch
 from certreach.verification.cegis import CEGISLoop
+from examples.factories import create_example, EXAMPLE_NAMES
+from examples.utils.experiment_utils import get_experiment_folder, save_experiment_details, setup_experiment_folder
 
 def parse_args():
     """Parse command line arguments."""
@@ -92,28 +93,81 @@ def cleanup():
         multiprocessing._ctx._semaphore_tracker.clear()
 
 def load_model_safely(example, model_path, device):
-    """Helper function to safely load model state dict with compatibility checks"""
+    """Helper function to safely load model"""
     logger = logging.getLogger(__name__)
     try:
-        # Load state dict
-        state_dict = torch.load(model_path, map_location=device)
-        
-        # Check if state dict needs processing
-        if isinstance(state_dict, dict):
-            # Remove 'module.' prefix if it exists (happens with DataParallel)
-            new_state_dict = {}
-            for k, v in state_dict.items():
-                name = k.replace('module.', '') if k.startswith('module.') else k
-                new_state_dict[name] = v
-            state_dict = new_state_dict
-        
-        # Try loading the processed state dict
-        example.model.load_state_dict(state_dict, strict=False)
+        # Use SingleBVPNet's load_checkpoint consistently
+        model, checkpoint = example.model.load_checkpoint(model_path, device=device)
+        example.model = model
         logger.info(f"Successfully loaded model from {model_path}")
         return True
     except Exception as e:
-        logger.warning(f"Failed to load model: {str(e)}")
+        logger.error(f"Failed to load model: {str(e)}")
         return False
+
+def find_best_model_path(model_dir):
+    """Find the best available model path by checking the most recent numbered directory"""
+    logger = logging.getLogger(__name__)
+    
+    if not os.path.exists(model_dir):
+        logger.warning(f"Model directory {model_dir} does not exist")
+        return None
+
+    # Look in parent directory (./logs) for numbered directories
+    parent_dir = os.path.dirname(model_dir)  # Gets ./logs from ./logs/double_integrator
+    base_name = os.path.basename(model_dir)  # Gets 'double_integrator'
+    
+    # Find all numbered directories matching the base name
+    numbered_dirs = []
+    for d in os.listdir(parent_dir):
+        full_path = os.path.join(parent_dir, d)
+        if not os.path.isdir(full_path):
+            continue
+        # Match directories that start with base_name and end with a number
+        if d.startswith(base_name) and '_' in d:
+            try:
+                num = int(d.split('_')[-1])
+                numbered_dirs.append((num, d))
+            except (ValueError, IndexError):
+                continue
+    
+    # If we found numbered directories, use the highest one
+    if numbered_dirs:
+        _, latest_dir = max(numbered_dirs, key=lambda x: x[0])
+        latest_path = os.path.join(parent_dir, latest_dir)
+        checkpoint_dir = os.path.join(latest_path, 'checkpoints')
+        
+        if os.path.exists(checkpoint_dir):
+            for model_file in ['model_final.pth', 'model_current.pth']:
+                model_path = os.path.join(checkpoint_dir, model_file)
+                if os.path.exists(model_path):
+                    logger.info(f"Found model: {model_file} in numbered directory {latest_dir}")
+                    return model_path
+    
+    # Only fall back to direct checkpoints directory if no numbered directories found
+    direct_checkpoint_dir = os.path.join(model_dir, 'checkpoints')
+    if os.path.exists(direct_checkpoint_dir):
+        logger.warning("Falling back to non-numbered directory structure")
+        for model_file in ['model_final.pth', 'model_current.pth']:
+            model_path = os.path.join(direct_checkpoint_dir, model_file)
+            if os.path.exists(model_path):
+                logger.info(f"Found model: {model_file} in direct checkpoints directory")
+                return model_path
+    
+    logger.warning("No valid model file found in any directory")
+    return None
+
+def try_load_model_from_folder(example, folder_path, device, logger):
+    """Try to load a model from a given folder path."""
+    checkpoint_dir = os.path.join(folder_path, 'checkpoints')
+    if os.path.exists(checkpoint_dir):
+        for model_file in ['model_final.pth', 'model_current.pth']:
+            model_path = os.path.join(checkpoint_dir, model_file)
+            if os.path.exists(model_path):
+                if load_model_safely(example, model_path, device):
+                    logger.info(f"Loaded model from {model_path}")
+                    return True
+    return False
 
 def main():
     # Register cleanup function
@@ -122,9 +176,8 @@ def main():
     # Parse command line arguments
     args = parse_args()
     
-    # Configure logging at application startup
-    log_file = os.path.join(args.logging_root, args.example, 'training.log')
-    configure_logging(log_file)
+    # Set up base logging without file handler initially
+    configure_logging(None)
     logger = logging.getLogger(__name__)
     
     logger.info(f"Starting experiment with example: {args.example}")
@@ -136,24 +189,40 @@ def main():
     example.device = device
     logger.info(f"Using device: {device}")
     
-    # Check for existing model when in training mode
-    if args.run_mode == 'train':
-        model_dir = os.path.join(args.logging_root, args.example)
-        final_model_path = os.path.join(model_dir, 'checkpoints', 'model_final.pth')
-        if os.path.exists(final_model_path):
-            example.initialize_components()
-            if load_model_safely(example, final_model_path, device):
-                if args.quick_mode:
-                    logger.info("Quick mode with existing model: Skipping training phase")
-                    args.run_mode = 'verify'
-            else:
-                logger.info("Will train from scratch")
-        else:
-            logger.info("No existing model found, will train from scratch")
+    # Make sure base directory exists
+    os.makedirs(args.logging_root, exist_ok=True)
     
+    # Get appropriate experiment folder path and info
+    exp_folder_path, _, prev_folder_path = get_experiment_folder(args.logging_root, args.example)
+    loaded_model = False
+
+    # Initialize components before loading model
+    example.initialize_components()
+
+    # Try to load model from previous experiment folder if it exists
+    if prev_folder_path:
+        loaded_model = try_load_model_from_folder(example, prev_folder_path, device, logger)
+        if loaded_model:
+            logger.info(f"Loaded model from previous experiment: {prev_folder_path}")
+
+    # Set up new experiment folder and logging
+    logger.info(f"Creating new experiment directory: {exp_folder_path}")
+    setup_experiment_folder(exp_folder_path, create=True)
+    log_file = os.path.join(exp_folder_path, 'training.log')
+    configure_logging(log_file)
+    example.root_path = exp_folder_path
+
+    # Handle quick mode with loaded model
+    if loaded_model and args.run_mode == 'train' and args.quick_mode:
+        logger.info("Quick mode with existing model: Skipping training phase")
+        args.run_mode = 'verify'
+
     # Run based on mode
     if args.run_mode == 'train':
-        logger.info("Starting training phase")
+        if not loaded_model:
+            logger.info("Starting training with new model")
+        else:
+            logger.info("Starting training with loaded model")
         example.train()
     
     if args.run_mode == 'verify':
@@ -164,9 +233,9 @@ def main():
             
             # Try to load existing model
             model_dir = os.path.join(args.logging_root, args.example)
-            final_model_path = os.path.join(model_dir, 'checkpoints', 'model_final.pth')
-            if os.path.exists(final_model_path):
-                if not load_model_safely(example, final_model_path, device):
+            model_path = find_best_model_path(model_dir)
+            if model_path:
+                if not load_model_safely(example, model_path, device):
                     logger.error("Failed to load model for verification. Please check model compatibility.")
                     return
             else:
@@ -192,9 +261,9 @@ def main():
         if not hasattr(example, 'model') or example.model is None:
             example.initialize_components()
             model_dir = os.path.join(args.logging_root, args.example)
-            final_model_path = os.path.join(model_dir, 'checkpoints', 'model_final.pth')
-            if os.path.exists(final_model_path):
-                if not load_model_safely(example, final_model_path, device):
+            model_path = find_best_model_path(model_dir)
+            if model_path:
+                if not load_model_safely(example, model_path, device):
                     logger.info("Failed to load existing model, creating new one")
             else:
                 logger.info("No existing model found, creating new one")
