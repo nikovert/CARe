@@ -1,30 +1,34 @@
 import os
-import json
 import torch
 import logging
 import torch.multiprocessing as mp
+from typing import Optional
 import matplotlib
-matplotlib.use('Agg')  # Add this line before importing pyplot
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-
-from certreach.common.dataio import (
-    DoubleIntegratorDataset,
-    get_experiment_folder,
-    save_experiment_details
-)
+from certreach.common.dataset import ReachabilityDataset
 from certreach.learning.training import train
 from certreach.learning.networks import SingleBVPNet
 from certreach.verification.symbolic import extract_symbolic_model
 from certreach.verification.dreal_utils import (
-    dreal_double_integrator_BRS,
     extract_dreal_partials,
     process_dreal_result
 )
+from certreach.verification.verify import verify_system
+from .verification import dreal_double_integrator_BRS
 from .loss import initialize_loss
+from examples.utils.experiment_utils import get_experiment_folder, save_experiment_details
+from examples.factories import register_example
 
 # Set multiprocessing start method
 mp.set_start_method('spawn', force=True)
 
+def double_integrator_boundary(coords):
+        pos = coords[:, 1:3]  # Extract [x, v]
+        boundary_values = torch.norm(pos, dim=1, keepdim=True)
+        return boundary_values - 0.25
+
+@register_example
 class DoubleIntegrator:
     Name = "double_integrator"
 
@@ -33,29 +37,37 @@ class DoubleIntegrator:
         self.root_path = get_experiment_folder(args.logging_root, self.Name)
         self.logger = logging.getLogger(__name__)
         self.device = torch.device(args.device)
-        
+                
         # Initialize model and other components only when needed
         self.model = None
         self.dataset = None
         self.loss_fn = None
+        self.verification_fn = dreal_double_integrator_BRS  # Add this line
 
-    def initialize_components(self):
+    def initialize_components(self, counterexample: Optional[torch.Tensor] = None):
         """Initialize dataset, model, and loss function"""
+        # Initialize dataset if it doesn't exist
         if self.dataset is None:
-            self.dataset = DoubleIntegratorDataset(
+            self.dataset = ReachabilityDataset(
                 numpoints=85000,
                 tMin=self.args.tMin,
                 tMax=self.args.tMax,
-                input_max=self.args.input_max,
                 pretrain=self.args.pretrain,
                 pretrain_iters=self.args.pretrain_iters,
                 counter_start=self.args.counter_start,
                 counter_end=self.args.counter_end,
                 num_src_samples=self.args.num_src_samples,
                 seed=self.args.seed,
-                device=self.device
+                device=self.device,
+                num_states=2,  # [position, velocity]
+                compute_boundary_values=double_integrator_boundary
             )
-
+        
+        # Add counterexample if provided
+        if counterexample is not None:
+            self.dataset.add_counterexample(counterexample)
+               
+        # Initialize model if needed
         if self.model is None:
             self.model = SingleBVPNet(
                 in_features=self.args.in_features,
@@ -69,26 +81,33 @@ class DoubleIntegrator:
             ).to(self.device)
 
         if self.loss_fn is None:
+            # Construct input bounds dictionary
+            input_bounds = {
+                'min': torch.tensor([-self.args.input_max]),  # Assuming symmetric bounds
+                'max': torch.tensor([self.args.input_max])
+            }
+            
             self.loss_fn = initialize_loss(
-                self.dataset,
+                self.device,
+                input_bounds=input_bounds,
                 minWith=self.args.minWith,
                 reachMode=self.args.reachMode,
                 reachAim=self.args.reachAim
             )
 
-    def train(self):
-        """Train the model"""
-        self.logger.info("Initializing training components")
-        self.initialize_components()
+    def train(self, counterexample: Optional[torch.Tensor] = None):
+        """Train the model with optional counterexample handling."""
+        self.logger.info("Initializing training")
+        self.initialize_components(counterexample)
         
-        self.logger.info("Setting up data loader")
+        # Setup data loader and continue with training
         dataloader = torch.utils.data.DataLoader(
             self.dataset,
             batch_size=self.args.batch_size,
             shuffle=True,
-            pin_memory=False  # Changed to False since data is already on device
+            pin_memory=False
         )
-
+        
         self.logger.info("Starting model training")
         train(
             model=self.model,
@@ -107,37 +126,6 @@ class DoubleIntegrator:
 
         self.logger.info("Saving experiment details")
         save_experiment_details(self.root_path, str(self.loss_fn), vars(self.args))
-        
-        if self.args.iterate:
-            self.logger.info("Starting iterative updates")
-            self.iterative_update()
-
-    def verify(self):
-        """Verify the trained model using dReal"""
-        self.logger.info("Starting model verification")
-        self.model = self.model.cpu()
-        
-        self.logger.info("Extracting symbolic model")
-        try:
-            symbolic_model = extract_symbolic_model(self.model, self.root_path)
-            result = extract_dreal_partials(symbolic_model, in_features=3)
-            
-            self.logger.info("Running dReal verification")
-            verification_result = dreal_double_integrator_BRS(
-                dreal_partials=result["dreal_partials"],
-                dreal_variables=result["dreal_variables"],
-                epsilon=0.35,
-                reachMode='forward',
-                reachAim='reach',
-                setType='set',
-                save_directory=self.root_path
-            )
-            
-            self.logger.info("Processing verification results")
-            process_dreal_result(f"{self.root_path}/dreal_result.json")
-        except Exception as e:
-            self.logger.error(f"Verification failed: {str(e)}")
-            raise
 
     def validate(self, model, ckpt_dir, epoch):
         """Validation function called during training"""
@@ -183,9 +171,12 @@ class DoubleIntegrator:
         velocities = V.reshape(-1, 1)
         time_coords = torch.ones_like(positions) * self.args.tMax
 
-        coords = torch.cat((time_coords, positions, velocities), dim=1)
+        # Move coordinates to the same device as the model
+        coords = torch.cat((time_coords, positions, velocities), dim=1).to(self.device)
         model_in = {'coords': coords}
-        model_out = model(model_in)['model_out'].detach().numpy().reshape(X.shape)
+        
+        # Get output and move back to CPU for plotting
+        model_out = model(model_in)['model_out'].cpu().detach().numpy().reshape(X.shape)
         adjusted_model_out = model_out - epsilon
 
         # Create comparison plots
@@ -222,8 +213,3 @@ class DoubleIntegrator:
         plt.savefig(save_path)
         plt.close(fig)
         self.logger.debug(f"Saved comparison plot at: {save_path}")
-
-    def iterative_update(self):
-        """Perform iterative updates using counterexamples"""
-        # Add iterative update code from train_double_integrator.py's iterate loop here
-        pass

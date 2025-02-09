@@ -5,8 +5,7 @@ from ..common import operators
 class HJILossFunction(ABC):
     """Base class for Hamilton-Jacobi-Isaacs loss functions."""
     
-    def __init__(self, dataset, minWith='none', reachMode='backward', reachAim='reach'):
-        self.dataset = dataset
+    def __init__(self, minWith='none', reachMode='backward', reachAim='reach'):
         self.minWith = minWith
         self.reachMode = reachMode
         self.reachAim = reachAim
