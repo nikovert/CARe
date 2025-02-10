@@ -1,6 +1,7 @@
 import os
 import torch
 import logging
+import numpy as np
 import torch.multiprocessing as mp
 from typing import Optional
 import matplotlib
@@ -15,6 +16,7 @@ from certreach.verification.dreal_utils import (
     process_dreal_result
 )
 from certreach.verification.verify import verify_system
+from certreach.common.matlab_loader import load_matlab_data, compare_with_nn
 from .verification import dreal_double_integrator_BRS
 from .loss import initialize_loss
 from examples.utils.experiment_utils import get_experiment_folder, save_experiment_details
@@ -23,14 +25,15 @@ from examples.factories import register_example
 # Set multiprocessing start method
 mp.set_start_method('spawn', force=True)
 
-def double_integrator_boundary(coords):
+def double_integrator_boundary(coords, radius=0.25):
         pos = coords[:, 1:3]  # Extract [x, v]
         boundary_values = torch.norm(pos, dim=1, keepdim=True)
-        return boundary_values - 0.25
+        return boundary_values - radius
 
 @register_example
 class DoubleIntegrator:
     Name = "double_integrator"
+    DEFAULT_MATLAB_FILE = "value_function.mat"  # Add this line
 
     def __init__(self, args):
         self.args = args
@@ -213,3 +216,62 @@ class DoubleIntegrator:
         plt.savefig(save_path)
         plt.close(fig)
         self.logger.debug(f"Saved comparison plot at: {save_path}")
+
+    def compare_with_true_values(
+        self, 
+        matlab_file_path: Optional[str] = None, 
+        visualize: bool = True
+    ):
+        """
+        Compare neural network predictions with true value function from MATLAB.
+        
+        Args:
+            matlab_file_path: Optional path to the .mat file. If None, uses default file in same directory
+            visualize: Whether to plot the comparison
+            
+        Returns:
+            Tuple of (difference array, mean squared error)
+        """
+        if matlab_file_path is None:
+            # Use default file in the same directory as this module
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            matlab_file_path = os.path.join(current_dir, self.DEFAULT_MATLAB_FILE)
+
+        self.logger.info(f"Loading true value function from: {matlab_file_path}")
+        
+        if not os.path.exists(matlab_file_path):
+            raise FileNotFoundError(
+                f"MATLAB file not found at: {matlab_file_path}. "
+                f"Please ensure '{self.DEFAULT_MATLAB_FILE}' is in the same directory as double_integrator.py"
+            )
+            
+        if self.model is None:
+            raise ValueError("Neural network model not initialized")
+            
+        # Load MATLAB data
+        matlab_data = load_matlab_data(matlab_file_path)
+        
+        # Add time dimension to grid points
+        grid_points = matlab_data['grid']
+        time_coords = torch.ones((grid_points.shape[0], 1)) * self.args.tMax
+        matlab_data['grid'] = np.hstack((time_coords, grid_points))
+        
+        # Compare with neural network
+        difference, mse = compare_with_nn(
+            self.model,
+            matlab_data,
+            visualize=visualize
+        )
+        
+        # Log results
+        self.logger.info(f"Comparison Results:")
+        self.logger.info(f"Mean Squared Error: {mse:.6f}")
+        self.logger.info(f"Max Absolute Error: {np.max(np.abs(difference)):.6f}")
+        self.logger.info(f"Mean Absolute Error: {np.mean(np.abs(difference)):.6f}")
+        
+        # Save comparison figure if visualize is True
+        if visualize:
+            plt.savefig(os.path.join(self.root_path, 'true_value_comparison.png'))
+            plt.close()
+            
+        return difference, mse

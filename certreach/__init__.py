@@ -13,6 +13,7 @@ from .verification.symbolic import (
     combine_all_layers_parallelized,
     extract_symbolic_model
 )
+from .common.matlab_loader import load_matlab_data, compare_with_nn
 
 # Version info
 __version__ = '0.1.0'

@@ -205,6 +205,9 @@ def main():
         if loaded_model:
             logger.info(f"Loaded model from previous experiment: {prev_folder_path}")
 
+    # Remove this, just for debugging!!
+    example.compare_with_true_values()
+
     # Set up new experiment folder and logging
     logger.info(f"Creating new experiment directory: {exp_folder_path}")
     setup_experiment_folder(exp_folder_path, create=True)
