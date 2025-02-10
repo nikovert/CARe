@@ -178,8 +178,6 @@ def try_load_model_from_folder(example, folder_path, device, logger):
     return False
 
 def main():
-    # Register cleanup function
-    atexit.register(cleanup)
     # Parse command line arguments
     args = parse_args()
     
