@@ -23,6 +23,7 @@ class NetworkConfig:
     first_layer_initialization_scale: Union[float, tune.uniform, tune.loguniform] = 30.0
     dropout_rate: Union[float, tune.uniform] = 0.0
     use_batch_norm: Union[bool, tune.grid_search, tune.choice] = False
+    sine_frequency: Union[float, tune.uniform] = 30.0  # New parameter
     
     def __init__(self, **kwargs):
         """Initialize NetworkConfig with flexible keyword arguments."""
@@ -73,17 +74,16 @@ class BatchLinear(torch.nn.Linear):
         return output
 
 class Sine(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, frequency=30.0):
         super().__init__()
+        self.frequency = frequency
 
     def forward(self, input):
         """
         See Sitzmann et al. (2020) "Implicit Neural Representations with Periodic Activation Functions"
-        Sec. 3.2, final paragraph: The scaling factor 30 allows for reliable training with 
-        SIREN initialization schemes.
-        Also see supplement Sec. 1.5 for detailed discussion of the frequency factor.
+        The frequency factor allows for tuning of the periodic activation.
         """
-        return torch.sin(30 * input)
+        return torch.sin(self.frequency * input)
 
 class PolynomialFunction(torch.autograd.Function):
     """Custom autograd function for polynomial computation."""
@@ -165,7 +165,7 @@ class PolynomialLayer(torch.nn.Module):
 # Shared activation configurations
 ACTIVATION_CONFIGS: Dict[str, Tuple[torch.nn.Module, callable, Optional[callable]]] = {
     'sine': (
-        Sine(),
+        lambda config: Sine(frequency=config.sine_frequency),
         lambda w: init.uniform_(w, 
             -torch.sqrt(torch.tensor(6.0 / w.size(-1))) / 30,
             torch.sqrt(torch.tensor(6.0 / w.size(-1))) / 30),
@@ -226,7 +226,8 @@ class SingleBVPNet(torch.nn.Module):
             self.config = config
             
             # Use shared activation configs
-            nl, init_fn, first_layer_init = ACTIVATION_CONFIGS[config.activation_type]
+            nl = ACTIVATION_CONFIGS[config.activation_type][0](config) if callable(ACTIVATION_CONFIGS[config.activation_type][0]) else ACTIVATION_CONFIGS[config.activation_type][0]
+            init_fn, first_layer_init = ACTIVATION_CONFIGS[config.activation_type][1:]
             self.weight_init = init_fn
             
             # Build network

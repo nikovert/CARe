@@ -6,9 +6,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def sine_transform(x):
+def sine_transform(x, frequency=30.0):
     """Helper function for sine transformation."""
-    return sympy.sin(30 * x)
+    return sympy.sin(frequency * x)
 
 def power_transform(x, power):
     """Helper function for polynomial transformation."""
@@ -22,15 +22,14 @@ class SymbolicPolynomialTransform:
     def __call__(self, x):
         return power_transform(x, self.power)
 
-def get_symbolic_layer_output_generalized(state_dict, layer_number, use_polynomial=False, poly_degree=2):
+def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
     """
     Generate symbolic output for the specified layer using state dict directly.
 
     Args:
         state_dict: The model's state dictionary
         layer_number: The target layer number (1-indexed)
-        use_polynomial: Whether the layer uses polynomial features
-        poly_degree: Degree of polynomial features if used
+        config: The model's configuration dictionary
 
     Returns:
         sympy.Matrix: Symbolic output for the specified layer.
@@ -54,9 +53,9 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, use_polynomi
     current_output = input_symbols
 
     # Process layer using state dict values
-    if use_polynomial and layer_number == 1:  # Polynomial layer is always first if used
+    if config.get('use_polynomial', False) and layer_number == 1:  # Polynomial layer is always first if used
         poly_terms = []
-        for i in range(1, poly_degree + 1):
+        for i in range(1, config.get('poly_degree', 2) + 1):
             transformer = SymbolicPolynomialTransform(i)
             poly_terms.append(current_output.applyfunc(transformer))
         current_output = sympy.Matrix.vstack(*poly_terms)
@@ -70,9 +69,10 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, use_polynomi
         bias = sympy.Matrix(state_dict[bias_key].detach().cpu().numpy())
         current_output = weight * current_output + bias
 
-        # Check for activation in the layer structure
-        if any('sine' in k for k in state_dict.keys()):  # This is a sine network
-            current_output = current_output.applyfunc(sine_transform)
+        # Check for activation and use correct frequency
+        if any('sine' in k for k in state_dict.keys()):
+            frequency = config.get('sine_frequency', 30.0)
+            current_output = current_output.applyfunc(lambda x: sine_transform(x, frequency))
 
     logger.info(f"Successfully generated symbolic output for layer {layer_number}")
     return current_output
@@ -82,8 +82,7 @@ def compute_layer(state_dict, config, layer_number):
     return get_symbolic_layer_output_generalized(
         state_dict, 
         layer_number,
-        use_polynomial=config.get('use_polynomial', False),
-        poly_degree=config.get('poly_degree', 2)
+        config
     )
 
 def parallel_substitution_task(args):
