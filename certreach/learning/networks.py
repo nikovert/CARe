@@ -2,65 +2,60 @@ import torch
 from collections import OrderedDict
 import math
 from pathlib import Path
+from dataclasses import dataclass, fields
+from typing import Optional, Literal, Dict, Any, Union, Tuple
+from ray import tune
+import torch.nn.init as init
 
-def set_known_weights_and_print(model):
-    """
-    Set known weights and biases for the model's layers, including BatchLinear and PolynomialLayer.
+@dataclass
+class NetworkConfig:
+    """Configuration for neural network architecture and training."""
+    in_features: int
+    out_features: int = 1
+    hidden_features: Union[int, tune.grid_search, tune.choice] = 32
+    num_hidden_layers: Union[int, tune.grid_search, tune.choice] = 3
+    activation_type: Union[Literal['sine', 'relu', 'sigmoid', 'tanh', 'selu', 'softplus', 'elu'], 
+                         tune.grid_search, tune.choice] = 'sine'
+    mode: str = 'mlp'
+    use_polynomial: Union[bool, tune.grid_search, tune.choice] = False
+    poly_degree: Union[int, tune.grid_search, tune.choice] = 2
+    initialization_scale: Union[float, tune.uniform, tune.loguniform] = 1.0
+    first_layer_initialization_scale: Union[float, tune.uniform, tune.loguniform] = 30.0
+    dropout_rate: Union[float, tune.uniform] = 0.0
+    use_batch_norm: Union[bool, tune.grid_search, tune.choice] = False
     
-    Assign unique, deterministic values for easy verification.
-    
-    Args:
-        model (torch.nn.Module): The PyTorch model to adjust.
-
-    Returns:
-        List[Tuple[str, torch.Tensor]]: Stored weights and biases for verification.
-    """
-    layer_idx = 0
-    weights_and_biases = []  # To store weights and biases for saving
-    device = next(model.parameters()).device  # Get model's device
-
-    # Iterate through all named modules in the network
-    for name, module in model.net.named_modules():
+    def __init__(self, **kwargs):
+        """Initialize NetworkConfig with flexible keyword arguments."""
+        # Filter out unknown arguments
+        known_fields = set(f.name for f in fields(self))
+        valid_kwargs = {k: v for k, v in kwargs.items() if k in known_fields}
         
-        # Handle BatchLinear Layers
-        if isinstance(module, torch.nn.Linear) or "BatchLinear" in type(module).__name__:
-            # Assign unique weights and biases
-            weight = torch.tensor(
-                [[0.1 * (layer_idx + i + j + 1) for j in range(module.weight.shape[1])]
-                 for i in range(module.weight.shape[0])],
-                dtype=torch.float32,
-                device=device  # Use model's device
-            )
-            bias = torch.tensor(
-                [0.05 * (layer_idx + i + 1) for i in range(module.bias.shape[0])],
-                dtype=torch.float32,
-                device=device  # Use model's device
-            )
-
-            # Set weights and biases in the layer
-            module.weight.data = weight
-            module.bias.data = bias
-
-            # Save for reference
-            weights_and_biases.append((f"Layer {layer_idx + 1} Weights", weight.clone()))
-            weights_and_biases.append((f"Layer {layer_idx + 1} Biases", bias.clone()))
-
-            layer_idx += 1
-        
-        # Handle Polynomial Layers
-        elif "PolynomialLayer" in type(module).__name__:
-            # Save Polynomial Layer Info
-            poly_info = f"Polynomial Layer {layer_idx + 1}: Degree={module.degree}, In={module.in_features}, Out={module.out_features}"
-            weights_and_biases.append((poly_info, "No Trainable Parameters"))
-            layer_idx += 1
+        # Initialize with filtered arguments
+        for name, value in valid_kwargs.items():
+            setattr(self, name, value)
+            
+        # Set required fields that weren't provided
+        if 'in_features' not in valid_kwargs:
+            raise ValueError("in_features is required")
     
-    # Print assigned weights and biases
-    for name, tensor in weights_and_biases:
-        print(f"{name}:")
-        print(tensor)
-        print("-" * 50)
-
-    return weights_and_biases
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert config to dictionary."""
+        return {k: v for k, v in self.__dict__.items()}
+    
+    @staticmethod
+    def get_tune_config():
+        """Get a configuration space for Ray Tune."""
+        return {
+            "hidden_features": tune.choice([16, 32, 64, 128]),
+            "num_hidden_layers": tune.choice([2, 3, 4, 5]),
+            "activation_type": tune.choice(['sine', 'relu', 'tanh']),
+            "use_polynomial": tune.choice([True, False]),
+            "poly_degree": tune.choice([2, 3]),
+            "initialization_scale": tune.loguniform(0.1, 10.0),
+            "first_layer_initialization_scale": tune.loguniform(1.0, 100.0),
+            "dropout_rate": tune.uniform(0.0, 0.5),
+            "use_batch_norm": tune.choice([True, False])
+        }
 
 class BatchLinear(torch.nn.Linear):
     '''A linear layer'''
@@ -82,140 +77,238 @@ class Sine(torch.nn.Module):
         super().__init__()
 
     def forward(self, input):
-        # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
+        """
+        See Sitzmann et al. (2020) "Implicit Neural Representations with Periodic Activation Functions"
+        Sec. 3.2, final paragraph: The scaling factor 30 allows for reliable training with 
+        SIREN initialization schemes.
+        Also see supplement Sec. 1.5 for detailed discussion of the frequency factor.
+        """
         return torch.sin(30 * input)
+
+class PolynomialFunction(torch.autograd.Function):
+    """Custom autograd function for polynomial computation."""
+    
+    @staticmethod
+    def forward(ctx, input, degree):
+        """
+        Compute polynomial terms up to the specified degree.
+        
+        Args:
+            ctx: Context object to save variables for backward
+            input (torch.Tensor): Input tensor
+            degree (int): Highest degree of polynomial
+        """
+        ctx.degree = degree
+        ctx.save_for_backward(input)
+        
+        # Compute polynomial terms [x, x^2, ..., x^degree]
+        results = [input**i for i in range(1, degree + 1)]
+        return torch.cat(results, dim=-1)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        """
+        Compute gradient of the loss with respect to the input.
+        
+        Args:
+            ctx: Context object with saved variables
+            grad_output: Gradient of the loss with respect to the output
+        """
+        input, = ctx.saved_tensors
+        degree = ctx.degree
+        
+        # Split grad_output into chunks corresponding to each polynomial term
+        chunks = grad_output.chunk(degree, dim=-1)
+        
+        # Compute gradient for each term: d(x^n)/dx = n * x^(n-1)
+        grad_input = torch.zeros_like(input)
+        for i, grad in enumerate(chunks):
+            power = i + 1  # polynomial term degree (1-based)
+            grad_input += power * (input ** (power - 1)) * grad
+            
+        return grad_input, None  # None for degree parameter
 
 class PolynomialLayer(torch.nn.Module):
     def __init__(self, in_features, out_features, degree=2):
         """
-        A custom layer that computes polynomial features based on input features.
+        A custom layer that computes polynomial features using custom backward propagation.
 
         Args:
-            in_features (int): Number of input features.
-            out_features (int): Number of output features (ignored for now).
-            degree (int): Highest degree of polynomial terms.
+            in_features (int): Number of input features
+            out_features (int): Number of output features (in_features * degree)
+            degree (int): Highest degree of polynomial terms
         """
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.degree = degree
+        
+        if out_features != in_features * degree:
+            raise ValueError(f"out_features must be in_features * degree. "
+                           f"Got {out_features} != {in_features} * {degree}")
 
     def forward(self, x):
         """
-        Computes concatenated polynomial features.
+        Applies polynomial transformation using custom autograd function.
 
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, in_features).
+            x (torch.Tensor): Input tensor of shape (batch_size, in_features)
 
         Returns:
-            torch.Tensor: Concatenated tensor with shape (batch_size, in_features * degree).
+            torch.Tensor: Concatenated tensor with shape (batch_size, in_features * degree)
         """
         if x.shape[-1] != self.in_features:
             raise ValueError(f"Expected input with {self.in_features} features, got {x.shape[-1]}")
+            
+        return PolynomialFunction.apply(x, self.degree)
 
-        # Compute polynomial terms
-        poly_features = [x**i for i in range(1, self.degree + 1)]
-        return torch.cat(poly_features, dim=-1)
+# Shared activation configurations
+ACTIVATION_CONFIGS: Dict[str, Tuple[torch.nn.Module, callable, Optional[callable]]] = {
+    'sine': (
+        Sine(),
+        lambda w: init.uniform_(w, -1/w.size(1), 1/w.size(1)),  # Default sine init
+        lambda w: init.uniform_(w, -30/w.size(1), 30/w.size(1))  # First layer with scale 30
+    ),
+    'relu': (
+        torch.nn.ReLU(inplace=True),
+        lambda w: init.kaiming_normal_(w, nonlinearity='relu'),
+        None
+    ),
+    'tanh': (
+        torch.nn.Tanh(),
+        lambda w: init.xavier_normal_(w),
+        None
+    ),
+    'sigmoid': (
+        torch.nn.Sigmoid(),
+        lambda w: init.xavier_normal_(w),
+        None
+    ),
+    'selu': (
+        torch.nn.SELU(inplace=True),
+        lambda w: init.normal_(w, std=1/math.sqrt(w.size(1))),
+        None
+    ),
+    'elu': (
+        torch.nn.ELU(inplace=True),
+        lambda w: init.normal_(w, std=math.sqrt(1.5505188080679277)/math.sqrt(w.size(1))),
+        None
+    ),
+    'softplus': (
+        torch.nn.Softplus(),
+        lambda w: init.kaiming_normal_(w, nonlinearity='relu'),
+        None
+    )
+}
 
-class FCBlock(torch.nn.Module):
-    '''A fully connected neural network.
-    '''
-
-    def __init__(self, in_features, out_features, num_hidden_layers, hidden_features,
-                 outermost_linear=False, nonlinearity='sine', weight_init=None,
-                 use_polynomial=False, poly_degree=2):
-        super().__init__()
-
-        self.first_layer_init = None
-
-        # Dictionary that maps nonlinearity name to the respective function, initialization, and, if applicable,
-        # special first-layer initialization scheme
-        nls_and_inits = {'sine':(Sine(), sine_init, first_layer_sine_init),
-                         'relu':(torch.nn.ReLU(inplace=True), init_weights_normal, None),
-                         'sigmoid':(torch.nn.Sigmoid(), init_weights_xavier, None),
-                         'tanh':(torch.nn.Tanh(), init_weights_xavier, None),
-                         'selu':(torch.nn.SELU(inplace=True), init_weights_selu, None),
-                         'softplus':(torch.nn.Softplus(), init_weights_normal, None),
-                         'elu':(torch.nn.ELU(inplace=True), init_weights_elu, None)}
-
-        nl, nl_weight_init, first_layer_init = nls_and_inits[nonlinearity]
-
-        if weight_init is not None:  # Overwrite weight init if passed
-            self.weight_init = weight_init
-        else:
-            self.weight_init = nl_weight_init
-
-        self.net = []
-
-        # Optionally add PolynomialLayer
-        if use_polynomial:
-            self.net.append(PolynomialLayer(
-                in_features=in_features, 
-                out_features=in_features * poly_degree, 
-                degree=poly_degree
-            ))
-            in_features = in_features * poly_degree
-
-        self.net.append(torch.nn.Sequential(
-            BatchLinear(in_features, hidden_features), nl
-        ))
-
-        for i in range(num_hidden_layers):
-            self.net.append(torch.nn.Sequential(
-                BatchLinear(hidden_features, hidden_features), nl
-            ))
-
-        if outermost_linear:
-            self.net.append(torch.nn.Sequential(BatchLinear(hidden_features, out_features)))
-        else:
-            self.net.append(torch.nn.Sequential(
-                BatchLinear(hidden_features, out_features), nl
-            ))
-
-        self.net = torch.nn.Sequential(*self.net)
-        if self.weight_init is not None:
-            self.net.apply(self.weight_init)
-
-        if first_layer_init is not None: # Apply special initialization to first layer, if applicable.
-            self.net[0].apply(first_layer_init)
-
-    def forward(self, coords, params=None, **kwargs):
-        if params is None:
-            params = OrderedDict(self.named_parameters())
-
-        output = self.net(coords)
-        return output
+def initialize_weights(module, weight_init):
+    """Helper function to initialize weights only for layers with parameters."""
+    if hasattr(module, 'weight') and isinstance(module.weight, torch.nn.Parameter):
+        weight_init(module.weight)
 
 class SingleBVPNet(torch.nn.Module):
     '''A canonical representation network for a BVP.'''
 
-    def __init__(self, 
-out_features: int = 1,
-type: str = 'sine',
-in_features=2,
-                 mode='mlp', 
-hidden_features=32, 
-num_hidden_layers=3,
-                 use_polynomial=False, 
-poly_degree=2, 
-**kwargs) -> None:
+    def __init__(self, config: Optional[Union[NetworkConfig, Dict[str, Any]]] = None, **kwargs) -> None:
         super().__init__()
-        self.mode = mode
-        self.in_features = in_features
-        self.out_features = out_features
-        self.hidden_features = hidden_features
-        self.num_hidden_layers = num_hidden_layers
-        self.activation_type = type
-        self.use_polynomial = use_polynomial
-        self.poly_degree = poly_degree
         
-        self.net = FCBlock(in_features=in_features, out_features=out_features, 
-                          num_hidden_layers=num_hidden_layers,
-                          hidden_features=hidden_features, outermost_linear=True, 
-                          nonlinearity=type, use_polynomial=use_polynomial, 
-                          poly_degree=poly_degree)
-        print(self)
-        self._checkpoint_dir = None
+        try:
+            # Convert dict to NetworkConfig if needed
+            if isinstance(config, dict):
+                config = NetworkConfig(**config)
+            elif config is None:
+                config = NetworkConfig(**kwargs)
+            elif not isinstance(config, NetworkConfig):
+                raise ValueError(f"config must be NetworkConfig, dict, or None, got {type(config)}")
+                
+            self.config = config
+            
+            # Use shared activation configs
+            nl, init_fn, first_layer_init = ACTIVATION_CONFIGS[config.activation_type]
+            self.weight_init = init_fn
+            
+            # Build network
+            layers = []
+            current_dim = config.in_features
+            
+            # Optional polynomial layer
+            if config.use_polynomial:
+                layers.append(PolynomialLayer(
+                    in_features=current_dim,
+                    out_features=current_dim * config.poly_degree,
+                    degree=config.poly_degree
+                ))
+                current_dim *= config.poly_degree
+
+            # Input layer
+            layers.append(self._create_layer_block(
+                current_dim, 
+                config.hidden_features,
+                nl,
+                is_first=True
+            ))
+            current_dim = config.hidden_features
+
+            # Hidden layers
+            for _ in range(config.num_hidden_layers):
+                layers.append(self._create_layer_block(
+                    current_dim,
+                    config.hidden_features,
+                    nl
+                ))
+
+            # Output layer
+            layers.append(self._create_layer_block(
+                current_dim,
+                config.out_features,
+                activation=None,  # No activation for output layer
+                is_output=True
+            ))
+
+            self.net = torch.nn.Sequential(*layers)
+
+            # Apply initialization
+            if self.weight_init is not None:
+                for module in self.net.modules():
+                    initialize_weights(module, self.weight_init)
+            if first_layer_init is not None:
+                # Find first linear layer and initialize it
+                for module in self.net.modules():
+                    if isinstance(module, BatchLinear):
+                        initialize_weights(module, first_layer_init)
+                        break
+            print(self)
+            
+        except Exception as e:
+            raise TypeError(f"Failed to initialize network: {str(e)}")
+
+    def _create_layer_block(self, in_features: int, out_features: int, 
+                          activation: Optional[torch.nn.Module] = None,
+                          is_first: bool = False,
+                          is_output: bool = False) -> torch.nn.Sequential:
+        """Create a block of layers including optional BatchNorm and Dropout."""
+        layers = []
+
+        # Linear layer
+        layers.append(BatchLinear(in_features, out_features))
+
+        # Optional BatchNorm (not on output layer)
+        if self.config.use_batch_norm and not is_output:
+            layers.append(torch.nn.BatchNorm1d(out_features))
+
+        # Activation (if provided)
+        if activation is not None:
+            layers.append(activation)
+
+        # Optional Dropout (not on first or output layer)
+        if self.config.dropout_rate > 0 and not is_first and not is_output:
+            layers.append(torch.nn.Dropout(self.config.dropout_rate))
+
+        return torch.nn.Sequential(*layers)
+
+    def get_config(self) -> Dict[str, Any]:
+        """Return model configuration for reconstruction"""
+        return self.config.to_dict()
 
     @property
     def checkpoint_dir(self):
@@ -244,7 +337,6 @@ poly_degree=2,
             'model_config': self.get_config(),
             **kwargs
         }
-        
         if optimizer is not None:
             checkpoint['optimizer_state_dict'] = optimizer.state_dict()
         if epoch is not None:
@@ -252,22 +344,9 @@ poly_degree=2,
             
         torch.save(checkpoint, path)
 
-    def get_config(self):
-        """Return model configuration for reconstruction"""
-        return {
-            'mode': self.mode,
-            'in_features': self.in_features,
-            'out_features': self.out_features,
-            'hidden_features': self.hidden_features,
-            'num_hidden_layers': self.num_hidden_layers,
-            'type': self.activation_type,
-            'use_polynomial': self.use_polynomial,
-            'poly_degree': self.poly_degree
-        }
-
     @staticmethod
     def load_checkpoint(path, device='cpu', eval_mode=True):
-        """
+        """ 
         Load model checkpoint with proper evaluation mode setting
         
         Args:
@@ -284,7 +363,7 @@ poly_degree=2,
             # Set default configuration
             default_config = {
                 'mode': 'mlp',
-                'type': 'sine',
+                'activation_type': 'sine',
                 'use_polynomial': False,
                 'poly_degree': 2
             }
@@ -294,11 +373,9 @@ poly_degree=2,
                 state_dict = checkpoint['model_state_dict']
                 input_layer = next(key for key in state_dict.keys() if 'net.0.0.weight' in key)
                 output_layer = next(key for key in state_dict.keys() if key.endswith('.weight'))
-                
                 in_features = state_dict[input_layer].shape[1]
                 out_features = state_dict[output_layer].shape[0]
                 hidden_features = state_dict[input_layer].shape[0]
-                
                 # Count hidden layers by counting unique layer indices in state dict
                 layer_indices = set()
                 for key in state_dict.keys():
@@ -306,7 +383,6 @@ poly_degree=2,
                         layer_idx = int(key.split('.')[1])
                         layer_indices.add(layer_idx)
                 num_hidden_layers = len(layer_indices) - 2  # subtract input and output layers
-                
                 model_config = {
                     **default_config,
                     'in_features': in_features,
@@ -324,14 +400,14 @@ poly_degree=2,
             
             if eval_mode:
                 model.eval()
-            
+                
             return model, checkpoint
             
         except Exception as e:
             raise RuntimeError(f"Failed to load checkpoint: {str(e)}")
-
+            
     def load_weights(self, state_dict, eval_mode=True):
-        """
+        """ 
         Load just the model weights
         
         Args:
@@ -345,95 +421,25 @@ poly_degree=2,
     def forward(self, model_input, params=None):
         if params is None:
             params = OrderedDict(self.named_parameters())
-
         # Enables us to compute gradients w.r.t. coordinates
         coords_org = model_input['coords'].clone().detach().requires_grad_(True)
         coords = coords_org
-
         output = self.net(coords)
         return {'model_in': coords_org, 'model_out': output}
 
-########################
-# Initialization methods
-def _no_grad_trunc_normal_(tensor, mean, std, a, b):
-    # For PINNet, Raissi et al. 2019
-    # Method based on https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf
-    def norm_cdf(x):
-        # Computes standard normal cumulative distribution function
-        return (1. + math.erf(x / math.sqrt(2.))) / 2.
-
-    with torch.no_grad():
-        # Values are generated by using a truncated uniform distribution and
-        # then using the inverse CDF for the normal distribution.
-        # Get upper and lower cdf values
-        l = norm_cdf((a - mean) / std)
-        u = norm_cdf((b - mean) / std)
-
-        # Uniformly fill tensor with values from [l, u], then translate to
-        # [2l-1, 2u-1].
-        tensor.uniform_(2 * l - 1, 2 * u - 1)
-
-        # Use inverse cdf transform for normal distribution to get truncated
-        # standard normal
-        tensor.erfinv_()
-
-        # Transform to proper mean, std
-        tensor.mul_(std * math.sqrt(2.))
-        tensor.add_(mean)
-
-        # Clamp to ensure it's in the proper range
-        tensor.clamp_(min=a, max=b)
-        return tensor
-
-def init_weights_trunc_normal(m):
-    # For PINNet, Raissi et al. 2019
-    # Method based on https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf
-    if type(m) == BatchLinear or type(m) == torch.nn.Linear:
-        if hasattr(m, 'weight'):
-            fan_in = m.weight.size(1)
-            fan_out = m.weight.size(0)
-            std = math.sqrt(2.0 / float(fan_in + fan_out))
-            mean = 0.
-            # initialize with the same behavior as tf.truncated_normal
-            # "The generated values follow a normal distribution with specified mean and
-            # standard deviation, except that values whose magnitude is more than 2
-            # standard deviations from the mean are dropped and re-picked."
-            _no_grad_trunc_normal_(m.weight, mean, std, -2 * std, 2 * std)
-
-def init_weights_normal(m):
-    if type(m) == BatchLinear or type(m) == torch.nn.Linear:
-        if hasattr(m, 'weight'):
-            torch.nn.init.kaiming_normal_(m.weight, a=0.0, nonlinearity='relu', mode='fan_in')
-
-def init_weights_selu(m):
-    if type(m) == BatchLinear or type(m) == torch.nn.Linear:
-        if hasattr(m, 'weight'):
-            num_input = m.weight.size(-1)
-            torch.nn.init.normal_(m.weight, std=1 / math.sqrt(num_input))
-
-def init_weights_elu(m):
-    if type(m) == BatchLinear or type(m) == torch.nn.Linear:
-        if hasattr(m, 'weight'):
-            num_input = m.weight.size(-1)
-            torch.nn.init.normal_(m.weight, std=math.sqrt(1.5505188080679277) / math.sqrt(num_input))
-
-def init_weights_xavier(m):
-    if type(m) == BatchLinear or type(m) == torch.nn.Linear:
-        if hasattr(m, 'weight'):
-            torch.nn.init.xavier_normal_(m.weight)
-
-def sine_init(m):
-    with torch.no_grad():
-        if hasattr(m, 'weight'):
-            num_input = m.weight.size(-1)
-            # See supplement Sec. 1.5 for discussion of factor 30
-            bound = torch.sqrt(torch.tensor(6.0 / num_input)) / 30
-            m.weight.uniform_(-bound, bound)
-
-def first_layer_sine_init(m):
-    with torch.no_grad():
-        if hasattr(m, 'weight'):
-            num_input = m.weight.size(-1)
-            # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
-            m.weight.uniform_(-1 / num_input, 1 / num_input)
+    def print_network_info(self):
+        """Print network architecture and parameter information."""
+        print(f"\nNetwork Architecture:")
+        print("=" * 50)
+        print(self)
+        print("\nParameter Information:")
+        print("=" * 50)
+        total_params = 0
+        for name, param in self.named_parameters():
+            print(f"{name}:")
+            print(f"Shape: {param.shape}")
+            print(f"Data:\n{param.data}")
+            print("-" * 50)
+            total_params += param.numel()
+        print(f"Total Parameters: {total_params}")
 

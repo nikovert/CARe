@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 
 from certreach.common.dataset import ReachabilityDataset
 from certreach.learning.training import train
-from certreach.learning.networks import SingleBVPNet
+from certreach.learning.networks import SingleBVPNet, NetworkConfig
 from certreach.verification.symbolic import extract_symbolic_model
 from certreach.verification.dreal_utils import (
     extract_dreal_partials,
@@ -74,16 +74,17 @@ class DoubleIntegrator:
                
         # Initialize model if needed
         if self.model is None:
-            self.model = SingleBVPNet(
+            config = NetworkConfig(
                 in_features=self.args.in_features,
                 out_features=self.args.out_features,
-                type=self.args.model_type,  # Changed from model to model_type
-                mode=self.args.model_mode,  # Changed from mode to model_mode
                 hidden_features=self.args.num_nl,
                 num_hidden_layers=self.args.num_hl,
+                activation_type='sine',  # Default to sine activation
                 use_polynomial=self.args.use_polynomial,
                 poly_degree=self.args.poly_degree
-            ).to(self.device)
+            )
+            
+            self.model = SingleBVPNet(config=config).to(self.device)
 
         if self.loss_fn is None:
             # Construct input bounds dictionary
