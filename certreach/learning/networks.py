@@ -166,8 +166,10 @@ class PolynomialLayer(torch.nn.Module):
 ACTIVATION_CONFIGS: Dict[str, Tuple[torch.nn.Module, callable, Optional[callable]]] = {
     'sine': (
         Sine(),
-        lambda w: init.uniform_(w, -1/w.size(1), 1/w.size(1)),  # Default sine init
-        lambda w: init.uniform_(w, -30/w.size(1), 30/w.size(1))  # First layer with scale 30
+        lambda w: init.uniform_(w, 
+            -torch.sqrt(torch.tensor(6.0 / w.size(-1))) / 30,
+            torch.sqrt(torch.tensor(6.0 / w.size(-1))) / 30),
+        lambda w: init.uniform_(w, -1/w.size(-1), 1/w.size(-1))
     ),
     'relu': (
         torch.nn.ReLU(inplace=True),
