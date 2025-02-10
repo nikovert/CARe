@@ -1,5 +1,5 @@
 import torch
-from ...learning.loss_functions import HJILossFunction
+from certreach.learning.loss_functions import HJILossFunction
 
 class TripleIntegratorLoss(HJILossFunction):
     def __init__(self, dataset, minWith='none', reachMode='backward', reachAim='reach'):

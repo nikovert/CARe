@@ -1,5 +1,5 @@
 import torch
-from dreal import And, Not, CheckSatisfiability, Variable, dreal
+from dreal import And, Not, CheckSatisfiability, Variable
 import json
 import logging
 import numpy as np

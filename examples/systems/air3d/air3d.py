@@ -2,20 +2,32 @@ import os
 import torch
 import logging
 import numpy as np
+import torch.multiprocessing as mp
+from typing import Optional
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from typing import Optional
+
 from certreach.common.dataset import ReachabilityDataset
-from certreach.common.dataio import get_experiment_folder, save_experiment_details
 from certreach.learning.training import train
 from certreach.learning.networks import SingleBVPNet
 from certreach.verification.symbolic import extract_symbolic_model
-from certreach.verification.dreal_utils import extract_dreal_partials, process_dreal_result
+from certreach.verification.dreal_utils import (
+    extract_dreal_partials,
+    process_dreal_result
+)
 from certreach.verification.verify import verify_system
+from certreach.common.matlab_loader import load_matlab_data, compare_with_nn
+
 from .verification import dreal_air3d_BRS
 from .loss import initialize_loss
+from examples.utils.experiment_utils import get_experiment_folder, save_experiment_details
+from examples.factories import register_example
 
+# Set multiprocessing start method
+mp.set_start_method('spawn', force=True)
+
+@register_example
 class Air3D:
     Name = "air3d"
 
@@ -35,7 +47,7 @@ class Air3D:
                 boundary_values = torch.norm(pos, dim=1, keepdim=True)
                 return boundary_values - self.args.collision_radius
 
-            self.dataset = BaseReachabilityDataset(
+            self.dataset = ReachabilityDataset(  # Changed from BaseReachabilityDataset
                 numpoints=self.args.numpoints,
                 tMin=self.args.tMin,
                 tMax=self.args.tMax,
@@ -80,7 +92,7 @@ class Air3D:
                 boundary_values = torch.norm(pos, dim=1, keepdim=True)
                 return boundary_values - self.args.collision_radius
 
-            self.dataset = BaseReachabilityDataset(
+            self.dataset = ReachabilityDataset(  # Changed from BaseReachabilityDataset
                 numpoints=self.args.numpoints,
                 tMin=self.args.tMin,
                 tMax=self.args.tMax,

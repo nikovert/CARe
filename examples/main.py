@@ -38,7 +38,7 @@ def parse_args():
     p.add_argument('--out_features', type=int, default=1)
     p.add_argument('--num_hl', type=int, default=0)
     p.add_argument('--num_nl', type=int, default=32)
-    p.add_argument('--use_polynomial', action='store_true', default=False)
+    p.add_argument('--use_polynomial', action='store_true', default=True)
     p.add_argument('--poly_degree', type=int, default=2)
 
     # System Specific Settings

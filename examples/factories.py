@@ -48,7 +48,7 @@ def discover_examples():
                 importlib.import_module(module_path)
                 logger.debug(f"Successfully loaded example system from {module_path}")
             except Exception as e:
-                logger.error(f"Failed to load example system from {module_path}: {e}")
+                logger.warning(f"Failed to load example system from {module_path}: {e}")
 
 # Discover examples when the module is imported
 discover_examples()

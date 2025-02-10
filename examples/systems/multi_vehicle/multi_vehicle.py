@@ -2,20 +2,32 @@ import os
 import torch
 import logging
 import numpy as np
+import torch.multiprocessing as mp
+from typing import Optional
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from typing import Optional
+
 from certreach.common.dataset import ReachabilityDataset
-from certreach.common.dataio import get_experiment_folder, save_experiment_details
 from certreach.learning.training import train
 from certreach.learning.networks import SingleBVPNet
 from certreach.verification.symbolic import extract_symbolic_model
-from certreach.verification.dreal_utils import extract_dreal_partials, process_dreal_result
+from certreach.verification.dreal_utils import (
+    extract_dreal_partials,
+    process_dreal_result
+)
 from certreach.verification.verify import verify_system
+from certreach.common.matlab_loader import load_matlab_data, compare_with_nn
+
 from .verification import dreal_multi_vehicle_BRS
 from .loss import initialize_loss
+from examples.utils.experiment_utils import get_experiment_folder, save_experiment_details
+from examples.factories import register_example
 
+# Set multiprocessing start method
+mp.set_start_method('spawn', force=True)
+
+@register_example
 class MultiVehicle:
     Name = "multi_vehicle"
 
@@ -49,7 +61,7 @@ class MultiVehicle:
                 boundary_values = torch.cat(boundary_values, dim=1)
                 return torch.min(boundary_values, dim=1, keepdim=True)[0]
 
-            self.dataset = ReachabilityDataset(
+            self.dataset = ReachabilityDataset(  # Changed from BaseReachabilityDataset
                 numpoints=self.args.numpoints,
                 tMin=self.args.tMin,
                 tMax=self.args.tMax,
@@ -237,7 +249,7 @@ class MultiVehicle:
                 boundary_values = torch.cat(boundary_values, dim=1)
                 return torch.min(boundary_values, dim=1, keepdim=True)[0]
 
-            self.dataset = ReachabilityDataset(
+            self.dataset = ReachabilityDataset(  # Changed from BaseReachabilityDataset
                 numpoints=self.args.numpoints,
                 tMin=self.args.tMin,
                 tMax=self.args.tMax,
