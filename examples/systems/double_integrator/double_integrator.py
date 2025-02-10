@@ -233,7 +233,6 @@ class DoubleIntegrator:
             Tuple of (difference array, mean squared error)
         """
         if matlab_file_path is None:
-            # Use default file in the same directory as this module
             current_dir = os.path.dirname(os.path.abspath(__file__))
             matlab_file_path = os.path.join(current_dir, self.DEFAULT_MATLAB_FILE)
 
@@ -251,27 +250,18 @@ class DoubleIntegrator:
         # Load MATLAB data
         matlab_data = load_matlab_data(matlab_file_path)
         
-        # Add time dimension to grid points
-        grid_points = matlab_data['grid']
-        time_coords = torch.ones((grid_points.shape[0], 1)) * self.args.tMax
-        matlab_data['grid'] = np.hstack((time_coords, grid_points))
-        
         # Compare with neural network
+        save_path = os.path.join(self.root_path[0], 'true_value_comparison.png')
         difference, mse = compare_with_nn(
             self.model,
             matlab_data,
-            visualize=visualize
+            visualize=visualize,
+            save_path=save_path
         )
         
         # Log results
         self.logger.info(f"Comparison Results:")
         self.logger.info(f"Mean Squared Error: {mse:.6f}")
         self.logger.info(f"Max Absolute Error: {np.max(np.abs(difference)):.6f}")
-        self.logger.info(f"Mean Absolute Error: {np.mean(np.abs(difference)):.6f}")
-        
-        # Save comparison figure if visualize is True
-        if visualize:
-            plt.savefig(os.path.join(self.root_path, 'true_value_comparison.png'))
-            plt.close()
             
         return difference, mse
