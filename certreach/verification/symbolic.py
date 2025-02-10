@@ -36,12 +36,20 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
     """
     logger.debug(f"Generating symbolic output for layer {layer_number}")
 
-    # Get input features from state dict
+    # Get input features from state dict, accounting for polynomial layer
     in_features = None
-    for name, param in state_dict.items():
-        if f'net.{layer_number-1}' in name and 'weight' in name:
-            in_features = param.shape[1]
-            break
+    if config.get('use_polynomial', False) and layer_number == 1:
+        # For polynomial layer, get input features from the next layer's weight
+        for name, param in state_dict.items():
+            if f'net.1.0.weight' in name:  # Look at the next layer after polynomial
+                in_features = param.shape[1] // config.get('poly_degree', 2)
+                break
+    else:
+        # Normal layer feature detection
+        for name, param in state_dict.items():
+            if f'net.{layer_number-1}.0.weight' in name:
+                in_features = param.shape[1]
+                break
 
     if in_features is None:
         raise ValueError(f"Could not determine input features for layer {layer_number}")

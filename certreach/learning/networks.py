@@ -280,7 +280,6 @@ class SingleBVPNet(torch.nn.Module):
                     if isinstance(module, BatchLinear):
                         initialize_weights(module, first_layer_init)
                         break
-            print(self)
             
         except Exception as e:
             raise TypeError(f"Failed to initialize network: {str(e)}")

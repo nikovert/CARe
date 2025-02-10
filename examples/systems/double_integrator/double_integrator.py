@@ -54,7 +54,7 @@ class DoubleIntegrator:
         # Initialize dataset if it doesn't exist
         if self.dataset is None:
             self.dataset = ReachabilityDataset(
-                numpoints=85000,
+                numpoints=self.args.train_points,  # Use configurable size
                 tMin=self.args.tMin,
                 tMax=self.args.tMax,
                 pretrain=self.args.pretrain,
@@ -106,28 +106,31 @@ class DoubleIntegrator:
         self.logger.info("Initializing training")
         self.initialize_components(counterexample)
         
-        # Setup data loader and continue with training
-        dataloader = torch.utils.data.DataLoader(
+        # Use configured dataset size
+        self.dataset.numpoints = self.args.train_points
+        
+        # Use pin_memory only for CPU device
+        use_pin_memory = self.device.type == 'cpu'
+        
+        train_loader = torch.utils.data.DataLoader(
             self.dataset,
             batch_size=self.args.batch_size,
             shuffle=True,
-            pin_memory=False
+            pin_memory=use_pin_memory
         )
         
         self.logger.info("Starting model training")
         train(
             model=self.model,
-            train_dataloader=dataloader,
+            train_dataloader=train_loader,
             epochs=self.args.num_epochs,
             lr=self.args.lr,
             steps_til_summary=100,
             epochs_til_checkpoint=1000,
             model_dir=self.root_path,
             loss_fn=self.loss_fn,
-            clip_grad=False,
-            use_lbfgs=False,
-            validation_fn=self.validate,
-            start_epoch=0
+            clip_grad=True,
+            validation_fn=self.validate
         )
 
         self.logger.info("Saving experiment details")
@@ -145,7 +148,7 @@ class DoubleIntegrator:
         num_times = len(times)
 
         # Create state space sampling grid
-        state_range = torch.linspace(-1.5, 1.5, 200)
+        state_range = torch.linspace(-1, 1, 200)
         fig, axes = plt.subplots(num_times, 1, figsize=(10, 15))
 
         for i, t in enumerate(times):
