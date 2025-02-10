@@ -195,15 +195,15 @@ def main():
     # Get appropriate experiment folder path and info
     exp_folder_path, _, prev_folder_path = get_experiment_folder(args.logging_root, args.example)
     loaded_model = False
+    
+    # Initialize components before loading model
+    example.initialize_components()
 
     # Try to load model from previous experiment folder if it exists
     if prev_folder_path:
         loaded_model = try_load_model_from_folder(example, prev_folder_path, device, logger)
         if loaded_model:
             logger.info(f"Loaded model from previous experiment: {prev_folder_path}")
-
-    # Remove this, just for debugging!!
-    example.compare_with_true_values()
 
     # Set up new experiment folder and logging
     logger.info(f"Creating new experiment directory: {exp_folder_path}")
