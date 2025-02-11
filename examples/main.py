@@ -23,9 +23,9 @@ def parse_args():
     p.add_argument('--experiment_name', type=str, default="Double_integrator", help='Name of the experiment.')
 
     # Training Settings
-    p.add_argument('--batch_size', type=int, default=32)
+    p.add_argument('--batch_size', type=int, default=256)
     p.add_argument('--lr', type=float, default=2e-5, help='Learning rate.')
-    p.add_argument('--num_epochs', type=int, default=30000, help='Number of training epochs.')
+    p.add_argument('--num_epochs', type=int, default=100000, help='Number of training epochs.')
     p.add_argument('--epochs_til_ckpt', type=int, default=1000, help='Checkpoint saving frequency.')
     p.add_argument('--steps_til_summary', type=int, default=100, help='Logging summary frequency.')
 
@@ -35,7 +35,7 @@ def parse_args():
     p.add_argument('--in_features', type=int, default=3)
     p.add_argument('--out_features', type=int, default=1)
     p.add_argument('--num_hl', type=int, default=0)
-    p.add_argument('--num_nl', type=int, default=64)
+    p.add_argument('--num_nl', type=int, default=128)
     p.add_argument('--use_polynomial', action='store_true', default=True)
     p.add_argument('--poly_degree', type=int, default=2)
 
