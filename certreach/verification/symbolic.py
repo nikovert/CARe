@@ -106,19 +106,29 @@ def parallel_substitution_task(args):
     # Using xreplace here for fast, dictionary-based substitution
     return expr.xreplace(substitution_map)
 
-def combine_all_layers_parallelized(state_dict, config, num_layers, simplify=False):
+def combine_all_layers_parallelized(state_dict, config, simplify=False):
     """
     Combine all layers using state dict directly.
+
+    Optimizations:
+    1. Batch substitution for faster replacements.
+    2. Parallel computation for symbolic substitutions using ProcessPoolExecutor.
+    3. Simplify symbolic expressions incrementally (optional).
     
     Args:
         state_dict: The model's state dictionary
         config: The model's configuration dictionary
-        num_layers: Number of layers in the model
         simplify: Whether to simplify expressions incrementally (default: False)
 
     Returns:
         sympy.Matrix: Combined symbolic representation of all layers
     """
+    
+    
+    # Determine number of layers from state dict
+    layer_indices = {int(key.split('.')[1]) for key in state_dict if '.weight' in key}
+    num_layers = max(layer_indices) + 1
+
     symbolic_outputs = [None] * num_layers
 
     # Compute symbolic outputs in parallel
@@ -177,13 +187,9 @@ def extract_symbolic_model(model, save_path):
     state_dict = model.state_dict()
     config = model.config.to_dict()
     
-    # Determine number of layers from state dict
-    layer_indices = {int(key.split('.')[1]) for key in state_dict if '.weight' in key}
-    num_layers = max(layer_indices) + 1
-    
     # Get and save symbolic expression
     symbolic_expression = combine_all_layers_parallelized(
-        state_dict, config, num_layers, simplify=False
+        state_dict, config, simplify=False
     )
 
     symbolic_file = os.path.join(save_path, "symbolic_model.txt")

@@ -27,6 +27,8 @@ from examples.factories import register_example
 # Set multiprocessing start method
 mp.set_start_method('spawn', force=True)
 
+logger = logging.getLogger(__name__)  # Move logger to module level
+
 def double_integrator_boundary(coords, radius=0.25):
         pos = coords[:, 1:3]  # Extract [x, v]
         boundary_values = torch.norm(pos, dim=1, keepdim=True)
@@ -40,7 +42,6 @@ class DoubleIntegrator:
     def __init__(self, args):
         self.args = args
         self.root_path = get_experiment_folder(args.logging_root, self.Name)
-        self.logger = logging.getLogger(__name__)
         self.device = torch.device(args.device)
                 
         # Initialize model and other components only when needed
@@ -103,7 +104,7 @@ class DoubleIntegrator:
 
     def train(self, counterexample: Optional[torch.Tensor] = None):
         """Train the model with optional counterexample handling."""
-        self.logger.info("Initializing training")
+        logger.info("Initializing training components")
         self.initialize_components(counterexample)
         
         # Use configured dataset size
@@ -112,6 +113,7 @@ class DoubleIntegrator:
         # Use pin_memory only for CPU device
         use_pin_memory = self.device.type == 'cpu'
         
+        logger.debug("Creating data loader with batch size %d", self.args.batch_size)
         train_loader = torch.utils.data.DataLoader(
             self.dataset,
             batch_size=self.args.batch_size,
@@ -119,7 +121,7 @@ class DoubleIntegrator:
             pin_memory=use_pin_memory
         )
         
-        self.logger.info("Starting model training")
+        logger.info("Starting model training")
         train(
             model=self.model,
             train_dataloader=train_loader,
@@ -133,7 +135,7 @@ class DoubleIntegrator:
             validation_fn=self.validate
         )
 
-        self.logger.info("Saving experiment details")
+        logger.debug("Saving experiment details to %s", self.root_path)
         save_experiment_details(self.root_path, str(self.loss_fn), vars(self.args))
 
     def validate(self, model, ckpt_dir, epoch):
@@ -162,7 +164,13 @@ class DoubleIntegrator:
             model_out = model(model_in)['model_out'].detach().cpu().numpy()
             model_out = model_out.reshape(X.shape)
 
+            # Create filled contour plot
             contour = axes[i].contourf(X, V, model_out, levels=50, cmap='bwr')
+            
+            # Add zero level set
+            zero_contour = axes[i].contour(X, V, model_out, levels=[0], colors='k', linewidths=2)
+            axes[i].clabel(zero_contour, inline=True, fontsize=8)
+            
             axes[i].set_title(f"t = {t:.2f}")
             axes[i].set_xlabel("Position (x)")
             axes[i].set_ylabel("Velocity (v)")
@@ -221,7 +229,7 @@ class DoubleIntegrator:
         save_path = os.path.join(save_dir, save_file)
         plt.savefig(save_path)
         plt.close(fig)
-        self.logger.debug(f"Saved comparison plot at: {save_path}")
+        logger.debug(f"Saved comparison plot at: {save_path}")
 
     def compare_with_true_values(
         self, 
@@ -242,9 +250,10 @@ class DoubleIntegrator:
             current_dir = os.path.dirname(os.path.abspath(__file__))
             matlab_file_path = os.path.join(current_dir, self.DEFAULT_MATLAB_FILE)
 
-        self.logger.info(f"Loading true value function from: {matlab_file_path}")
+        logger.debug("Loading true value function from: %s", matlab_file_path)
         
         if not os.path.exists(matlab_file_path):
+            logger.error("MATLAB file not found: %s", matlab_file_path)
             raise FileNotFoundError(
                 f"MATLAB file not found at: {matlab_file_path}. "
                 f"Please ensure '{self.DEFAULT_MATLAB_FILE}' is in the same directory as double_integrator.py"
@@ -257,7 +266,7 @@ class DoubleIntegrator:
         matlab_data = load_matlab_data(matlab_file_path)
         
         # Compare with neural network
-        save_path = os.path.join(self.root_path[0], 'true_value_comparison.png')
+        save_path = os.path.join(self.root_path, 'DoubleIntegrator_true_value_comparison.png')
         difference, mse = compare_with_nn(
             self.model,
             matlab_data,
@@ -266,8 +275,8 @@ class DoubleIntegrator:
         )
         
         # Log results
-        self.logger.info(f"Comparison Results:")
-        self.logger.info(f"Mean Squared Error: {mse:.6f}")
-        self.logger.info(f"Max Absolute Error: {np.max(np.abs(difference)):.6f}")
+        logger.info("Comparison Results:")
+        logger.info("Mean Squared Error: %.6f", mse)
+        logger.info("Max Absolute Error: %.6f", np.max(np.abs(difference)))
             
         return difference, mse

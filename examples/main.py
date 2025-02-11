@@ -75,6 +75,10 @@ def parse_args():
     p.add_argument('--train_points', type=int, default=85000,
                   help='Number of training points to sample')
 
+    # Add solution checking argument
+    p.add_argument('--check_solution', action='store_true', default=True,
+                  help='Compare results with true values after verification')
+
     args = p.parse_args()
 
     # Adjust parameters based on mode
@@ -180,12 +184,11 @@ def main():
     # Parse command line arguments
     args = parse_args()
     
-    # Set up base logging without file handler initially
-    configure_logging(None)
+    # Set up logging with DEBUG level
+    configure_logging(None, log_level=logging.DEBUG)  # Changed to DEBUG level
     logger = logging.getLogger(__name__)
     
     logger.info(f"Starting experiment with example: {args.example}")
-    logger.debug(f"Arguments: {args}")
 
     # Create example with explicit device
     device = torch.device(args.device)
@@ -249,6 +252,11 @@ def main():
                 epsilon = dreal_result.get("epsilon", args.epsilon)
             logger.info(f"Using epsilon value: {epsilon} from dReal results")
             example.plot_final_model(example.model, example.root_path, epsilon)
+            
+            # Add comparison with true values if requested
+            if args.check_solution:
+                logger.info("Comparing results with true values...")
+                example.compare_with_true_values()
 
     elif args.run_mode == 'cegis':
         logger.info("Starting CEGIS phase")
@@ -270,6 +278,11 @@ def main():
         example.plot_final_model(example.model, example.root_path, result.epsilon)
         logger.info(f"CEGIS {'completed' if result.success else 'failed'}. "
                    f"Best epsilon: {result.epsilon}")
+        
+        # Add comparison with true values if requested
+        if args.check_solution:
+            logger.info("Comparing results with true values...")
+            example.compare_with_true_values()
 
     logger.info("Experiment completed")
     cleanup()
