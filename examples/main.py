@@ -83,7 +83,6 @@ def parse_args():
         args.max_iterations = 2
         args.epsilon = 0.35
         args.batch_size = 16
-        args.num_workers = 0  # Always disable multiprocessing for quick mode
     elif args.full_mode:
         args.num_epochs = 5000
         args.max_iterations = 10

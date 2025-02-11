@@ -140,3 +140,6 @@ Thumbs.db
 
 # PyTorch model files
 *.pth
+
+# Matlab files
+*.mat

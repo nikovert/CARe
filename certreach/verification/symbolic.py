@@ -103,7 +103,8 @@ def parallel_substitution_task(args):
         sympy.Expr: The substituted expression.
     """
     expr, substitution_map = args
-    return expr.subs(substitution_map, simultaneous=True)
+    # Using xreplace here for fast, dictionary-based substitution
+    return expr.xreplace(substitution_map)
 
 def combine_all_layers_parallelized(state_dict, config, num_layers, simplify=False):
     """
@@ -122,13 +123,9 @@ def combine_all_layers_parallelized(state_dict, config, num_layers, simplify=Fal
 
     # Compute symbolic outputs in parallel
     with ProcessPoolExecutor() as executor:
-        futures = {
-            executor.submit(compute_layer, state_dict, config, i + 1): i 
-            for i in range(num_layers)
-        }
-        for future in futures:
-            layer_idx = futures[future]
-            symbolic_outputs[layer_idx] = future.result()
+        futures = [executor.submit(compute_layer, state_dict, config, i + 1) for i in range(num_layers)]
+        for i, future in enumerate(futures):
+            symbolic_outputs[i] = future.result()
 
     # Validate outputs
     for i, symbolic_output in enumerate(symbolic_outputs, start=1):
@@ -142,19 +139,16 @@ def combine_all_layers_parallelized(state_dict, config, num_layers, simplify=Fal
     for layer_number in range(2, num_layers + 1):
         symbolic_output_next = symbolic_outputs[layer_number - 1]
         
+        num_subs = len(combined_symbolic_model)
         # Generate input symbols for the next layer
         input_symbols_next_layer = [
             sympy.symbols(f"x_{layer_number}_{i + 1}") 
-            for i in range(len(combined_symbolic_model))
+            for i in range(num_subs)
         ]
 
         # Create substitution map and prepare parallel processing
         substitution_map = dict(zip(input_symbols_next_layer, combined_symbolic_model))
-        substitution_args = [(expr, substitution_map) for expr in symbolic_output_next]
-
-        # Parallel substitution
-        with ProcessPoolExecutor() as executor:
-            substituted_outputs = list(executor.map(parallel_substitution_task, substitution_args))
+        substituted_outputs = [expr.xreplace(substitution_map) for expr in symbolic_output_next]
 
         combined_symbolic_model = sympy.Matrix(substituted_outputs)
 
@@ -202,4 +196,3 @@ def extract_symbolic_model(model, save_path):
         raise
 
     return symbolic_expression
-
