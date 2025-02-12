@@ -1,5 +1,6 @@
 import time
 import logging
+import torch
 from typing import Dict, Any, Tuple, Optional, Callable
 from certreach.verification.symbolic import extract_symbolic_model
 from certreach.verification.dreal_utils import (
@@ -10,7 +11,8 @@ from certreach.verification.dreal_utils import (
 logger = logging.getLogger(__name__)
 
 def verify_system(
-    model, 
+    model_state: Dict[str, torch.Tensor],
+    model_config: Dict[str, Any],
     root_path: str, 
     system_type: str, 
     epsilon: float,
@@ -21,9 +23,10 @@ def verify_system(
     Verify a trained model using dReal with option to reuse symbolic model.
     
     Args:
-        model: The trained PyTorch model (already on CPU)
+        model_state: The model's state dictionary
+        model_config: The model's configuration (including architecture details)
         root_path: Path to save verification results
-        system_type: Type of system to verify ('double_integrator', 'triple_integrator', 'three_state')
+        system_type: Type of system to verify
         epsilon: Verification tolerance
         verification_fn: System-specific verification function
         symbolic_model: Optional precomputed symbolic model
@@ -39,7 +42,7 @@ def verify_system(
         # Time symbolic model generation
         if symbolic_model is None:
             t_symbolic_start = time.time()
-            symbolic_model = extract_symbolic_model(model, root_path)
+            symbolic_model = extract_symbolic_model(model_state, model_config, root_path)
             timing_info['symbolic_time'] = time.time() - t_symbolic_start
             logger.debug("Symbolic model saved to %s", root_path)  # Add debug message
         else:
@@ -48,8 +51,7 @@ def verify_system(
 
         # Time dReal verification setup and execution
         t_verify_start = time.time()
-        in_features = 3 if system_type == 'double_integrator' else 4
-        result = extract_dreal_partials(symbolic_model, in_features=in_features)
+        result = extract_dreal_partials(symbolic_model)
         
         logger.info("Running dReal verification")
         verification_result = verification_fn(

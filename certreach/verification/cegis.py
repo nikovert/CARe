@@ -62,25 +62,25 @@ class CEGISLoop:
         """Run the CEGIS loop with proper CUDA memory management."""
         iteration_count = 0
         start_time = time.time()
-        
+        model_config = self.example.model.get_config()
         while iteration_count < self.max_iterations:
             logger.info("Starting iteration %d with epsilon: %.4f", 
                        iteration_count + 1, self.current_epsilon)
             
-            # Only disable gradients for verification
+            # Extract model state and config
             with torch.no_grad():
-                cpu_model = deepcopy(self.example.model)  # This preserves architecture
-                cpu_model.cpu()  # Move the clone to CPU
+                model_state = {k: v.cpu() for k, v in self.example.model.state_dict().items()}
             
-                # Get verification result and timing info
-                verification_result, timing_info, symbolic_model = verify_system(
-                    model=cpu_model,
-                    root_path=self.example.root_path,
-                    system_type=self.example.Name,
-                    epsilon=self.current_epsilon,
-                    verification_fn=self.example.verification_fn,
-                    symbolic_model=self.current_symbolic_model
-                )
+            # Get verification result and timing info
+            verification_result, timing_info, symbolic_model = verify_system(
+                model_state=model_state,
+                model_config=model_config,
+                root_path=self.example.root_path,
+                system_type=self.example.Name,
+                epsilon=self.current_epsilon,
+                verification_fn=self.example.verification_fn,
+                symbolic_model=self.current_symbolic_model
+            )
             
             # Store symbolic model for potential reuse
             self.current_symbolic_model = symbolic_model

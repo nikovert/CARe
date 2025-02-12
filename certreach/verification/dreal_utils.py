@@ -113,20 +113,22 @@ def sympy_to_dreal_converter(syms: dict, exp: sympy.Expr, to_number=lambda x: fl
     logger.error(f"Unsupported term: {exp} (type: {type(exp)})")
     raise ValueError(f"[Error] Unsupported term: {exp} (type: {type(exp)})")
 
-def extract_dreal_partials(final_symbolic_expression, in_features):
+def extract_dreal_partials(final_symbolic_expression):
     """
     Extracts dReal-compatible variables and partial derivatives 
     from a given symbolic expression.
 
     Args:
         final_symbolic_expression (sympy.Matrix): The symbolic expression from the neural network.
-        in_features (int): The number of input features in the model.
 
     Returns:
         dict: A dictionary containing dReal variables and their partial derivatives.
     """
-    # Define SymPy input symbols
-    input_symbols = sympy.Matrix([sympy.symbols(f"x_1_{i+1}") for i in range(in_features)])
+    # Get input symbols from first layer (x_1_1, x_1_2, etc.)
+    input_symbols = [sym for sym in final_symbolic_expression.free_symbols 
+                    if str(sym).startswith('x_1_')]
+    input_symbols.sort(key=lambda x: int(str(x).split('_')[2]))  # Sort by index
+    input_symbols = sympy.Matrix(input_symbols)
 
     # Compute symbolic partial derivatives
     partials = [final_symbolic_expression[0].diff(var) for var in input_symbols]
@@ -136,18 +138,18 @@ def extract_dreal_partials(final_symbolic_expression, in_features):
 
     # Convert symbolic partial derivatives to dReal expressions
     dreal_partials = {
-        f"partial_x_1_{i+1}": sympy_to_dreal_converter(dreal_variables, partial)
-        for i, partial in enumerate(partials)
+        f"partial_{str(var)}": sympy_to_dreal_converter(dreal_variables, partial)
+        for var, partial in zip(input_symbols, partials)
     }
 
-    # Return all relevant variables and partial derivatives
     return {
         "input_symbols": input_symbols,
         "partials": partials,
         "dreal_variables": dreal_variables,
         "dreal_partials": dreal_partials,
         **{f"sympy_partial_{i+1}": partial for i, partial in enumerate(partials)},
-        **{f"dreal_partial_{i+1}": dreal_partials[f"partial_x_1_{i+1}"] for i in range(in_features)}
+        **{f"dreal_partial_{i+1}": dreal_partials[f"partial_{str(input_symbols[i])}"] 
+           for i in range(len(input_symbols))}
     }
 
 def sympy_to_serializable(obj):

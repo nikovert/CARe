@@ -1,7 +1,9 @@
 import os
 import sympy
 from concurrent.futures import ProcessPoolExecutor
+from typing import Dict, Any
 import logging
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -169,22 +171,19 @@ def combine_all_layers_parallelized(state_dict, config, simplify=False):
     logger.info(f"All {num_layers} layers combined successfully.")
     return combined_symbolic_model
 
-def extract_symbolic_model(model, save_path):
+def extract_symbolic_model(state_dict: Dict[str, torch.Tensor], config: Dict[str, Any], save_path: str):
     """
-    Extracts a symbolic representation from the trained model and saves it.
+    Extracts a symbolic representation from the model state dictionary and config.
 
     Args:
-        model (torch.nn.Module): The trained PyTorch model
+        state_dict (Dict[str, torch.Tensor]): The model's state dictionary
+        config (Dict[str, Any]): The model's configuration dictionary
         save_path (str): Path to save the symbolic model
 
     Returns:
         str: The extracted symbolic model as a string
     """
     logger.info("Starting symbolic model extraction")
-    
-    # Extract necessary components
-    state_dict = model.state_dict()
-    config = model.config.to_dict()
     
     # Get and save symbolic expression
     symbolic_expression = combine_all_layers_parallelized(
