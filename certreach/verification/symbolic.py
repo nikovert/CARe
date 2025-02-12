@@ -1,5 +1,4 @@
 import os
-import torch
 import sympy
 from concurrent.futures import ProcessPoolExecutor
 import logging

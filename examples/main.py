@@ -6,7 +6,7 @@ from examples.log import configure_logging
 import torch
 from certreach.verification.cegis import CEGISLoop
 from examples.factories import create_example, EXAMPLE_NAMES
-from examples.utils.experiment_utils import get_experiment_folder, save_experiment_details, setup_experiment_folder
+from examples.utils.experiment_utils import get_experiment_folder, setup_experiment_folder
 
 def parse_args():
     """Parse command line arguments."""
@@ -14,52 +14,75 @@ def parse_args():
     
     # Required arguments
     p.add_argument('--example', type=str, required=True, choices=EXAMPLE_NAMES,
-                       help='Name of the example to run')
+                  help='Name of the example to run')
     p.add_argument('--run_mode', type=str, required=True, choices=['train', 'verify', 'cegis'],
-                       help='Mode to run: train, verify, or cegis')
+                  help='Mode to run: train, verify, or cegis')
     
     # Logging and Experiment Settings
-    p.add_argument('--logging_root', type=str, default='./logs', help='Root directory for logging.')
-    p.add_argument('--experiment_name', type=str, default="Double_integrator", help='Name of the experiment.')
+    p.add_argument('--logging_root', type=str, default='./logs',
+                  help='Root directory for logging')
+    p.add_argument('--experiment_name', type=str, default="Double_integrator",
+                  help='Name of the experiment for logging purposes')
 
     # Training Settings
-    p.add_argument('--batch_size', type=int, default=256)
-    p.add_argument('--lr', type=float, default=2e-5, help='Learning rate.')
-    p.add_argument('--num_epochs', type=int, default=100000, help='Number of training epochs.')
-    p.add_argument('--epochs_til_ckpt', type=int, default=1000, help='Checkpoint saving frequency.')
-    p.add_argument('--steps_til_summary', type=int, default=100, help='Logging summary frequency.')
+    p.add_argument('--batch_size', type=int, default=32768,
+                  help='Number of points to sample per batch')
+    p.add_argument('--lr', type=float, default=2e-5,
+                  help='Learning rate for optimizer')
+    p.add_argument('--num_epochs', type=int, default=100000,
+                  help='Number of training epochs')
+    p.add_argument('--epochs_til_ckpt', type=int, default=1000,
+                  help='Number of epochs between model checkpoints')
 
     # Model Settings
-    p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'tanh', 'sigmoid', 'relu'])
-    p.add_argument('--model_mode', type=str, default='mlp', choices=['mlp', 'rbf', 'pinn'])
-    p.add_argument('--in_features', type=int, default=3)
-    p.add_argument('--out_features', type=int, default=1)
-    p.add_argument('--num_hl', type=int, default=0)
-    p.add_argument('--num_nl', type=int, default=128)
-    p.add_argument('--use_polynomial', action='store_true', default=True)
-    p.add_argument('--poly_degree', type=int, default=2)
+    p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'tanh', 'sigmoid', 'relu'],
+                  help='Activation function for the neural network')
+    p.add_argument('--model_mode', type=str, default='mlp', choices=['mlp', 'rbf', 'pinn'],
+                  help='Type of neural network architecture')
+    p.add_argument('--in_features', type=int, default=3,
+                  help='Number of input features for the network')
+    p.add_argument('--out_features', type=int, default=1,
+                  help='Number of output features from the network')
+    p.add_argument('--num_hl', type=int, default=0,
+                  help='Number of hidden layers')
+    p.add_argument('--num_nl', type=int, default=128,
+                  help='Number of neurons per layer')
+    p.add_argument('--use_polynomial', action='store_true', default=True,
+                  help='Whether to use polynomial features')
+    p.add_argument('--poly_degree', type=int, default=2,
+                  help='Degree of polynomial features if used')
 
     # System Specific Settings
-    p.add_argument('--tMin', type=float, default=0.0)
-    p.add_argument('--tMax', type=float, default=1.0)
-    p.add_argument('--input_max', type=float, default=1.0)
-    p.add_argument('--minWith', type=str, default='none', choices=['none', 'zero', 'target'])
-    p.add_argument('--reachMode', type=str, default='forward', choices=['backward', 'forward'])
-    p.add_argument('--reachAim', type=str, default='reach', choices=['avoid', 'reach'])
-    p.add_argument('--setType', type=str, default='set', choices=['set', 'tube'])
+    p.add_argument('--tMin', type=float, default=0.0,
+                  help='Minimum time for reachability analysis')
+    p.add_argument('--tMax', type=float, default=1.0,
+                  help='Maximum time for reachability analysis')
+    p.add_argument('--input_max', type=float, default=1.0,
+                  help='Maximum input magnitude for system')
+    p.add_argument('--minWith', type=str, default='none', choices=['none', 'zero', 'target'],
+                  help='Type of minimum operation to use in HJ reachability')
+    p.add_argument('--reachMode', type=str, default='forward', choices=['backward', 'forward'],
+                  help='Direction of reachability computation')
+    p.add_argument('--reachAim', type=str, default='reach', choices=['avoid', 'reach'],
+                  help='Whether to compute reach or avoid sets')
+    p.add_argument('--setType', type=str, default='set', choices=['set', 'tube'],
+                  help='Whether to compute reachable set or tube')
 
     # Training Process Settings
-    p.add_argument('--pretrain', action='store_true', default=True)
-    p.add_argument('--pretrain_iters', type=int, default=2000)
-    p.add_argument('--counter_start', type=int, default=0)
-    p.add_argument('--counter_end', type=int, default=100e3)
-    p.add_argument('--num_src_samples', type=int, default=1000)
-    p.add_argument('--seed', type=int, default=0)
+    p.add_argument('--pretrain_percentage', type=float, default=0.1,
+                  help='Percentage of total steps to use for pretraining (0.0 to 1.0)')
+    p.add_argument('--seed', type=int, default=0,
+                  help='Random seed for reproducibility')
 
     # Verification Settings
-    p.add_argument('--epsilon', type=float, default=0.35)
-    p.add_argument('--epsilon_radius', type=float, default=0.1)
-    p.add_argument('--max_iterations', type=int, default=5)
+    p.add_argument('--epsilon', type=float, default=0.35,
+                  help='Initial epsilon for verification')
+    p.add_argument('--min_epsilon', type=float, default=0.01,
+                  help='Minimum epsilon to achieve before terminating CEGIS')
+    p.add_argument('--epsilon_radius', type=float, default=0.1,
+                  help='Radius around counterexample points for sampling')
+    p.add_argument('--max_iterations', type=int, default=5,
+                  help='Maximum number of CEGIS iterations')
     
     # Add device argument
     p.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
@@ -71,13 +94,15 @@ def parse_args():
     p.add_argument('--full_mode', action='store_true', default=False,
                   help='Enable full training mode with complete epochs and iterations')
     
-    # Dataset Settings
-    p.add_argument('--train_points', type=int, default=85000,
-                  help='Number of training points to sample')
-
     # Add solution checking argument
     p.add_argument('--check_solution', action='store_true', default=True,
                   help='Compare results with true values after verification')
+
+    # Dataset Settings
+    p.add_argument('--percentage_in_counterexample', type=float, default=20.0,
+                  help='Percentage of points to sample near counterexamples')
+    p.add_argument('--percentage_at_t0', type=float, default=20.0,
+                  help='Percentage of points to sample at t=0')
 
     args = p.parse_args()
 
@@ -269,15 +294,15 @@ def main():
         
         logger.info(f"Starting {'quick' if args.quick_mode else 'full'} CEGIS loop")
         logger.info(f"Parameters: epochs={args.num_epochs}, "
-                   f"max_iterations={args.max_iterations}, "
-                   f"epsilon={args.epsilon}")
+                f"max_iterations={args.max_iterations}, "
+                f"epsilon={args.epsilon}")
         
         cegis = CEGISLoop(example, args)
         result = cegis.run()
         
         example.plot_final_model(example.model, example.root_path, result.epsilon)
         logger.info(f"CEGIS {'completed' if result.success else 'failed'}. "
-                   f"Best epsilon: {result.epsilon}")
+                f"Best epsilon: {result.epsilon}")
         
         # Add comparison with true values if requested
         if args.check_solution:

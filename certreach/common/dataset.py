@@ -9,10 +9,8 @@ class ReachabilityDataset(Dataset):
     Base class for reachability analysis datasets.
     Implements common functionality for curriculum learning and data generation.
     """
-    def __init__(self, numpoints, tMin=0.0, tMax=1.0, 
-                 pretrain=False, pretrain_iters=2000,
-                 counter_start=0, counter_end=100e3,
-                 num_src_samples=1000, seed=0, device=None,
+    def __init__(self, batch_size, tMin=0.0, tMax=1.0, 
+                 seed=0, device=None,
                  counterexamples=None, percentage_in_counterexample=20,
                  percentage_at_t0=20, epsilon_radius=0.1,
                  num_states=None, compute_boundary_values=None):
@@ -20,14 +18,9 @@ class ReachabilityDataset(Dataset):
         Initialize base dataset parameters.
 
         Args:
-            numpoints (int): Number of points to sample per batch
+            batch_size (int): Number of points to sample per batch
             tMin (float): Minimum time value
             tMax (float): Maximum time value
-            pretrain (bool): Whether to use pretraining
-            pretrain_iters (int): Number of pretraining iterations
-            counter_start (int): Start value for curriculum counter
-            counter_end (int): End value for curriculum counter
-            num_src_samples (int): Number of source (t=0) samples
             seed (int): Random seed for reproducibility
             device (torch.device): Device to store tensors
             counterexample (torch.Tensor, optional): Counterexample points [n, state_dim]
@@ -42,19 +35,11 @@ class ReachabilityDataset(Dataset):
         torch.manual_seed(seed)
         self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        logger.debug(f"Initializing dataset with {numpoints} points")
+        logger.debug(f"Initializing dataset with batch size {batch_size}")
 
-        self.numpoints = numpoints
+        self.batch_size = batch_size
         self.tMin = tMin
         self.tMax = tMax
-        
-        self.pretrain = pretrain
-        self.pretrain_iters = pretrain_iters
-        self.pretrain_counter = 0
-
-        self.counter = counter_start
-        self.full_count = counter_end
-        self.N_src_samples = num_src_samples
 
         if num_states is None:
             raise ValueError("num_states must be specified")
@@ -81,32 +66,21 @@ class ReachabilityDataset(Dataset):
         """Dataset length is always 1 as we generate data dynamically."""
         return 1
 
+    def update_time_range(self, tMin: float, tMax: float) -> None:
+        """Update the time range for sampling."""
+        self.tMin = tMin
+        self.tMax = tMax
+
     def _get_time_samples(self):
-        """Generate time samples based on training phase."""
-        start_time = 0.0
-
-        if self.pretrain:
-            # During pretraining, all samples are at t=0
-            time = torch.ones(self.numpoints, 1, device=self.device) * start_time
-        else:
-            # Progressive sampling during training
-            time = self.tMin + torch.zeros(self.numpoints, 1, device=self.device).uniform_(
-                0, (self.tMax - self.tMin) * (self.counter / self.full_count))
-            # Ensure some samples at t=0
-            time[-self.N_src_samples:, 0] = start_time
-
-        return time, start_time
-
-    def _update_counters(self):
-        """Update curriculum learning counters."""
-        if self.pretrain and self.pretrain_counter == self.pretrain_iters - 1:
-            logger.info("Pretraining phase completed")
-        if self.pretrain:
-            self.pretrain_counter += 1
-            if self.pretrain_counter == self.pretrain_iters:
-                self.pretrain = False
-        elif self.counter < self.full_count:
-            self.counter += 1
+        """Generate time samples using current time range."""
+        # Regular sampling between tMin and tMax
+        time = torch.zeros(self.batch_size, 1, device=self.device).uniform_(self.tMin, self.tMax)
+        
+        # Ensure some samples at t=0 based on percentage_at_t0
+        n_t0 = int(self.batch_size * self.percentage_at_t0 / 100)
+        time[-n_t0:, 0] = self.tMin
+        
+        return time, self.tMin
 
     def _sample_near_counterexample(self, num_points):
         """
@@ -145,22 +119,21 @@ class ReachabilityDataset(Dataset):
         return torch.zeros(num_points, self.num_states, device=self.device).uniform_(-1, 1)
 
     def __getitem__(self, idx):
-        """Base implementation for getting samples."""
-        # Get time samples first
+        """Get samples using current time range."""
         time, start_time = self._get_time_samples()
         
         # Calculate number of points for each category
-        n_t0 = int(self.numpoints * self.percentage_at_t0 / 100)
+        n_t0 = int(self.batch_size * self.percentage_at_t0 / 100)
         
         if self.counterexamples is not None:
-            n_counter = int(self.numpoints * self.percentage_in_counterexample / 100)
-            n_random = self.numpoints - n_counter - n_t0
+            n_counter = int(self.batch_size * self.percentage_in_counterexample / 100)
+            n_random = self.batch_size - n_counter - n_t0
             
             # Sample counterexample points (includes time)
             counter_coords = self._sample_near_counterexample(n_counter)
             
         else:
-            n_random = self.numpoints - n_t0
+            n_random = self.batch_size - n_t0
             
         # Sample remaining points
         random_states = self._sample_state_space(n_random)
@@ -175,18 +148,15 @@ class ReachabilityDataset(Dataset):
             coords = torch.cat([counter_coords, random_coords, t0_coords], dim=0)
         else:
             coords = torch.cat([random_coords, t0_coords], dim=0)
+            
+        # Add observation dimension
+        coords = coords.unsqueeze(1)  # [batch_size, 1, num_dims]
 
-        # Compute boundary values
-        boundary_values = self.compute_boundary_values(coords)
-
-        # Create Dirichlet mask
-        if self.pretrain:
-            dirichlet_mask = torch.ones(coords.shape[0], 1, device=self.device) > 0
-        else:
-            dirichlet_mask = (coords[:, 0, None] == start_time)
-
-        # Update curriculum learning counters
-        self._update_counters()
+        # Compute boundary values and add observation dimension
+        boundary_values = self.compute_boundary_values(coords.squeeze(1)).unsqueeze(1)
+        
+        # Create Dirichlet mask with observation dimension
+        dirichlet_mask = (coords[:, :, 0] == start_time)
 
         return {'coords': coords}, {
             'source_boundary_values': boundary_values,
@@ -218,4 +188,8 @@ class ReachabilityDataset(Dataset):
             self.counterexamples = torch.cat([self.counterexamples, counterexample.to(self.device)], dim=0)
         
         logger.debug(f"Added {counterexample.size(0)} counterexample points. Total: {self.counterexamples.size(0)}")
+
+    def get_batch(self):
+        """Generate a new batch of data directly without using indexing."""
+        return self.__getitem__(0)
 

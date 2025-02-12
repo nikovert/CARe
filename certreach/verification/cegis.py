@@ -3,9 +3,11 @@ import json
 import time
 import logging
 import torch
-from typing import Optional, Dict, Any, List
+from typing import Optional, List
 from dataclasses import dataclass
 from certreach.verification.verify import verify_system
+from certreach.common.dataset import ReachabilityDataset
+from certreach.learning.training import train
 from copy import deepcopy
 
 logger = logging.getLogger(__name__)
@@ -31,7 +33,7 @@ class CEGISLoop:
     
     def __init__(self, example, args):
         self.example = example
-        self.args = args
+        self.args = args # To pass on arguments to training and dataset creation
         self.device = torch.device(args.device)
         self.max_iterations = args.max_iterations
         self.current_epsilon = args.epsilon
@@ -40,6 +42,21 @@ class CEGISLoop:
         self.best_model_state = None
         self.timing_history = []
         self.current_symbolic_model = None
+        self.min_epsilon = args.min_epsilon
+                
+        # Initialize dataset if not already existing
+        self.dataset = ReachabilityDataset(
+            batch_size=args.batch_size,
+            tMin=args.tMin,
+            tMax=args.tMax,
+            seed=args.seed,
+            device=self.device,
+            num_states=example.NUM_STATES,  # Use the example's number of states
+            compute_boundary_values=example.boundary_fn,
+            percentage_in_counterexample=args.percentage_in_counterexample,
+            percentage_at_t0=args.percentage_at_t0,
+            epsilon_radius=args.epsilon_radius
+        )
         
     def run(self) -> CEGISResult:
         """Run the CEGIS loop with proper CUDA memory management."""
@@ -70,7 +87,7 @@ class CEGISLoop:
             
             # Store timing information
             self.timing_history.append(TimingStats(
-                training_time=getattr(self.example, 'last_training_time', 0.0),
+                training_time=getattr(self, 'last_training_time', 0.0),
                 symbolic_time=timing_info['symbolic_time'],
                 verification_time=timing_info['verification_time']
             ))
@@ -88,21 +105,40 @@ class CEGISLoop:
                         self.best_model_state = {
                             k: v.clone() for k, v in self.example.model.state_dict().items()
                         }
+                    # Check if we've reached minimum epsilon
+                    if self.current_epsilon <= self.min_epsilon:
+                        logger.info(f"Reached minimum epsilon threshold: {self.min_epsilon}")
+                        break
                     self.current_epsilon *= 0.5
+                    # Ensure we don't go below minimum epsilon
+                    self.current_epsilon = max(self.current_epsilon, self.min_epsilon)
                     self.args.epsilon = self.current_epsilon
             else:
                 # Train on counterexample
                 train_start = time.time()
-                self.example.train(counterexample=counterexample)
-                train_time = time.time() - train_start
-                self.example.last_training_time = train_time
+                self.dataset.add_counterexample(counterexample)
+                train(
+                    model=self.example.model,
+                    dataset=self.dataset,
+                    epochs=self.args.num_epochs,
+                    lr=self.args.lr,
+                    epochs_til_checkpoint=self.args.epochs_til_ckpt,
+                    model_dir=self.example.root_path,
+                    loss_fn=self.example.loss_fn,
+                    pretrain_percentage= 0.0 if iteration_count>1 else self.args.pretrain_percentage,  # Use pretrain only first time
+                    time_min=self.args.tMin,
+                    time_max=self.args.tMax,
+                    validation_fn=self.example.validate,
+                    device=self.device
+                )
+                self.last_training_time = time.time() - train_start
                 self.current_symbolic_model = None  # Reset symbolic model after training
                 
             iteration_count += 1
         
         total_time = time.time() - start_time
         return self._finalize_results(total_time)
-    
+
     def _process_verification_results(self) -> Optional[torch.Tensor]:
         """Process verification results and return counterexample if found."""
         dreal_result_path = f"{self.example.root_path}/dreal_result.json"

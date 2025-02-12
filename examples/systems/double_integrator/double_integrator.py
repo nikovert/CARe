@@ -8,20 +8,14 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from certreach.common.dataset import ReachabilityDataset
 from certreach.learning.training import train
 from certreach.learning.networks import SingleBVPNet, NetworkConfig
-from certreach.verification.symbolic import extract_symbolic_model
-from certreach.verification.dreal_utils import (
-    extract_dreal_partials,
-    process_dreal_result
-)
-from certreach.verification.verify import verify_system
 from certreach.common.matlab_loader import load_matlab_data, compare_with_nn
+from certreach.common.dataset import ReachabilityDataset
 
 from .verification import dreal_double_integrator_BRS
 from .loss import initialize_loss
-from examples.utils.experiment_utils import get_experiment_folder, save_experiment_details
+from examples.utils.experiment_utils import get_experiment_folder
 from examples.factories import register_example
 
 # Set multiprocessing start method
@@ -38,6 +32,7 @@ def double_integrator_boundary(coords, radius=0.25):
 class DoubleIntegrator:
     Name = "double_integrator"
     DEFAULT_MATLAB_FILE = "value_function.mat"  # Add this line
+    NUM_STATES = 2  # Add this class variable to define number of states
 
     def __init__(self, args):
         self.args = args
@@ -46,32 +41,12 @@ class DoubleIntegrator:
                 
         # Initialize model and other components only when needed
         self.model = None
-        self.dataset = None
         self.loss_fn = None
         self.verification_fn = dreal_double_integrator_BRS  # Add this line
+        self.boundary_fn = double_integrator_boundary  # Add this line
 
-    def initialize_components(self, counterexample: Optional[torch.Tensor] = None):
+    def initialize_components(self):
         """Initialize dataset, model, and loss function"""
-        # Initialize dataset if it doesn't exist
-        if self.dataset is None:
-            self.dataset = ReachabilityDataset(
-                numpoints=self.args.train_points,  # Use configurable size
-                tMin=self.args.tMin,
-                tMax=self.args.tMax,
-                pretrain=self.args.pretrain,
-                pretrain_iters=self.args.pretrain_iters,
-                counter_start=self.args.counter_start,
-                counter_end=self.args.counter_end,
-                num_src_samples=self.args.num_src_samples,
-                seed=self.args.seed,
-                device=self.device,
-                num_states=2,  # [position, velocity]
-                compute_boundary_values=double_integrator_boundary
-            )
-        
-        # Add counterexample if provided
-        if counterexample is not None:
-            self.dataset.add_counterexample(counterexample)
                
         # Initialize model if needed
         if self.model is None:
@@ -102,48 +77,40 @@ class DoubleIntegrator:
                 reachAim=self.args.reachAim
             )
 
-    def train(self, counterexample: Optional[torch.Tensor] = None):
-        """Train the model with optional counterexample handling."""
-        logger.info("Initializing training components")
-        self.initialize_components(counterexample)
-        
-        # Use configured dataset size
-        self.dataset.numpoints = self.args.train_points
-        
-        # Use pin_memory only for CPU device
-        use_pin_memory = self.device.type == 'cpu'
-        
-        logger.debug("Creating data loader with batch size %d", self.args.batch_size)
-        train_loader = torch.utils.data.DataLoader(
-            self.dataset,
+    def train(self):
+        """Train the model"""
+        self.initialize_components()
+
+        dataset = ReachabilityDataset(
             batch_size=self.args.batch_size,
-            shuffle=True,
-            pin_memory=use_pin_memory
+            tMin=self.args.tMin,
+            tMax=self.args.tMax,
+            seed=self.args.seed,
+            device=self.device,
+            num_states=self.NUM_STATES,
+            compute_boundary_values=self.boundary_fn,  # Use class boundary_fn
+            percentage_in_counterexample=self.args.percentage_in_counterexample,
+            percentage_at_t0=self.args.percentage_at_t0,
+            epsilon_radius=self.args.epsilon_radius
         )
         
-        logger.info("Starting model training")
         train(
             model=self.model,
-            train_dataloader=train_loader,
+            dataset=dataset,
             epochs=self.args.num_epochs,
             lr=self.args.lr,
-            steps_til_summary=100,
-            epochs_til_checkpoint=1000,
+            epochs_til_checkpoint=self.args.epochs_til_ckpt,
             model_dir=self.root_path,
             loss_fn=self.loss_fn,
-            clip_grad=True,
-            validation_fn=self.validate
+            time_min=self.args.tMin,
+            time_max=self.args.tMax,
+            validation_fn=self.validate,
+            device=self.device,
+            use_amp=True  # New parameter with default
         )
-
-        logger.debug("Saving experiment details to %s", self.root_path)
-        save_experiment_details(self.root_path, str(self.loss_fn), vars(self.args))
 
     def validate(self, model, ckpt_dir, epoch):
         """Validation function called during training"""
-        # Unnormalization constants
-        norm_to = 0.02
-        mean = 0.25
-        var = 0.5
 
         # Define evaluation time points
         times = [self.args.tMin, 0.5 * (self.args.tMin + self.args.tMax), self.args.tMax]
