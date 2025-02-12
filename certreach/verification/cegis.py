@@ -35,6 +35,7 @@ class CEGISLoop:
         self.example = example
         self.args = args # To pass on arguments to training and dataset creation
         self.device = torch.device(args.device)
+        example.model = example.model.to(self.device)  # Ensure model is on correct device
         self.max_iterations = args.max_iterations
         self.current_epsilon = args.epsilon
         self.best_epsilon = float('inf')
@@ -50,7 +51,7 @@ class CEGISLoop:
             tMin=args.tMin,
             tMax=args.tMax,
             seed=args.seed,
-            device=self.device,
+            device=self.device,  # Pass device explicitly
             num_states=example.NUM_STATES,  # Use the example's number of states
             compute_boundary_values=example.boundary_fn,
             percentage_in_counterexample=args.percentage_in_counterexample,
@@ -67,11 +68,32 @@ class CEGISLoop:
             'name': self.example.Name,
             'root_path': self.example.root_path
         }
+
+        # Initial training if starting from scratch
+        if not hasattr(self.example.model, 'checkpoint_dir'):
+            logger.info("Starting initial training before verification loop")
+            train_start = time.time()
+            train(
+                model=self.example.model,
+                dataset=self.dataset,
+                epochs=self.args.num_epochs,
+                lr=self.args.lr,
+                epochs_til_checkpoint=self.args.epochs_til_ckpt,
+                model_dir=self.example.root_path,
+                loss_fn=self.example.loss_fn,
+                pretrain_percentage=self.args.pretrain_percentage,
+                time_min=self.args.tMin,
+                time_max=self.args.tMax,
+                validation_fn=self.example.validate,
+                device=self.device
+            )
+            self.last_training_time = time.time() - train_start
+
         while iteration_count < self.max_iterations:
             logger.info("Starting iteration %d with epsilon: %.4f", 
                        iteration_count + 1, self.current_epsilon)
             
-            # Extract model state and config
+            # Extract model state and config, keeping tensors on CPU for verification
             with torch.no_grad():
                 model_state = {k: v.cpu() for k, v in self.example.model.state_dict().items()}
             

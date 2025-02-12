@@ -25,13 +25,13 @@ def parse_args():
                   help='Name of the experiment for logging purposes')
 
     # Training Settings
-    p.add_argument('--batch_size', type=int, default=32768,
+    p.add_argument('--batch_size', type=int, default=128000,
                   help='Number of points to sample per batch')
     p.add_argument('--lr', type=float, default=2e-5,
                   help='Learning rate for optimizer')
-    p.add_argument('--num_epochs', type=int, default=100000,
+    p.add_argument('--num_epochs', type=int, default=int(10e6),
                   help='Number of training epochs')
-    p.add_argument('--epochs_til_ckpt', type=int, default=1000,
+    p.add_argument('--epochs_til_ckpt', type=int, default=int(10e4),
                   help='Number of epochs between model checkpoints')
 
     # Model Settings
@@ -45,7 +45,7 @@ def parse_args():
                   help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
-    p.add_argument('--num_nl', type=int, default=128,
+    p.add_argument('--num_nl', type=int, default=32,
                   help='Number of neurons per layer')
     p.add_argument('--use_polynomial', action='store_true', default=True,
                   help='Whether to use polynomial features')
@@ -132,9 +132,9 @@ def load_model_safely(example, model_path, device):
     """Helper function to safely load model"""
     logger = logging.getLogger(__name__)
     try:
-        # Use SingleBVPNet's load_checkpoint consistently
+        # Explicitly move model to device after loading
         model, checkpoint = example.model.load_checkpoint(model_path, device=device)
-        example.model = model
+        example.model = model.to(device)  # Ensure model is on correct device
         logger.info(f"Successfully loaded model from {model_path}")
         return True
     except Exception as e:
@@ -210,16 +210,23 @@ def main():
     args = parse_args()
     
     # Set up logging with DEBUG level
-    configure_logging(None, log_level=logging.DEBUG)  # Changed to DEBUG level
+    configure_logging(None, log_level=logging.DEBUG)
     logger = logging.getLogger(__name__)
     
+    # Simplified device setup for single GPU
+    if args.device == 'cuda' and torch.cuda.is_available():
+        device = torch.device('cuda:0')  # Use the only GPU
+        logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
+        logger.info(f"Available GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+    else:
+        device = torch.device('cpu')
+        logger.info("Using CPU")
+
     logger.info(f"Starting experiment with example: {args.example}")
 
     # Create example with explicit device
-    device = torch.device(args.device)
     example = create_example(args.example, args)
-    example.device = device
-    logger.info(f"Using device: {device}")
+    example.device = device  # Ensure model is on device
     
     # Make sure base directory exists
     os.makedirs(args.logging_root, exist_ok=True)
