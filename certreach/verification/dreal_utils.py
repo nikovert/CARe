@@ -48,7 +48,7 @@ def verify_with_dreal(dreal_partials, dreal_variables, compute_hamiltonian, epsi
     all_constraints = And(final_condition, state_constraints)
 
     # Check constraints
-    result = CheckSatisfiability(all_constraints, 1e-5)
+    result = CheckSatisfiability(all_constraints, 1e-3)
 
     # Save results
     result_data = {

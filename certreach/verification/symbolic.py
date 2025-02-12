@@ -78,8 +78,8 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
         bias = sympy.Matrix(state_dict[bias_key].detach().cpu().numpy())
         current_output = weight * current_output + bias
 
-        # Check for activation and use correct frequency
-        if any('sine' in k for k in state_dict.keys()):
+        # Check activation type from config instead of state dict keys
+        if config.get('activation_type') == 'sine':
             frequency = config.get('sine_frequency', 30.0)
             current_output = current_output.applyfunc(lambda x: sine_transform(x, frequency))
 
