@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 
 from certreach.common.dataset import ReachabilityDataset
 from certreach.learning.training import train
-from certreach.learning.networks import SingleBVPNet
+from certreach.learning.networks import SingleBVPNet, NetworkConfig
 from certreach.verification.symbolic import extract_symbolic_model
 from certreach.verification.dreal_utils import (
     extract_dreal_partials,
@@ -27,6 +27,8 @@ from examples.factories import register_example
 # Set multiprocessing start method
 mp.set_start_method('spawn', force=True)
 
+logger = logging.getLogger(__name__)  # Move logger to module level
+
 def double_integrator_boundary(coords, radius=0.25):
         pos = coords[:, 1:3]  # Extract [x, v]
         boundary_values = torch.norm(pos, dim=1, keepdim=True)
@@ -40,7 +42,6 @@ class DoubleIntegrator:
     def __init__(self, args):
         self.args = args
         self.root_path = get_experiment_folder(args.logging_root, self.Name)
-        self.logger = logging.getLogger(__name__)
         self.device = torch.device(args.device)
                 
         # Initialize model and other components only when needed
@@ -54,7 +55,7 @@ class DoubleIntegrator:
         # Initialize dataset if it doesn't exist
         if self.dataset is None:
             self.dataset = ReachabilityDataset(
-                numpoints=85000,
+                numpoints=self.args.train_points,  # Use configurable size
                 tMin=self.args.tMin,
                 tMax=self.args.tMax,
                 pretrain=self.args.pretrain,
@@ -74,16 +75,17 @@ class DoubleIntegrator:
                
         # Initialize model if needed
         if self.model is None:
-            self.model = SingleBVPNet(
+            config = NetworkConfig(
                 in_features=self.args.in_features,
                 out_features=self.args.out_features,
-                type=self.args.model_type,  # Changed from model to model_type
-                mode=self.args.model_mode,  # Changed from mode to model_mode
                 hidden_features=self.args.num_nl,
                 num_hidden_layers=self.args.num_hl,
+                activation_type='sine',  # Default to sine activation
                 use_polynomial=self.args.use_polynomial,
                 poly_degree=self.args.poly_degree
-            ).to(self.device)
+            )
+            
+            self.model = SingleBVPNet(config=config).to(self.device)
 
         if self.loss_fn is None:
             # Construct input bounds dictionary
@@ -102,34 +104,38 @@ class DoubleIntegrator:
 
     def train(self, counterexample: Optional[torch.Tensor] = None):
         """Train the model with optional counterexample handling."""
-        self.logger.info("Initializing training")
+        logger.info("Initializing training components")
         self.initialize_components(counterexample)
         
-        # Setup data loader and continue with training
-        dataloader = torch.utils.data.DataLoader(
+        # Use configured dataset size
+        self.dataset.numpoints = self.args.train_points
+        
+        # Use pin_memory only for CPU device
+        use_pin_memory = self.device.type == 'cpu'
+        
+        logger.debug("Creating data loader with batch size %d", self.args.batch_size)
+        train_loader = torch.utils.data.DataLoader(
             self.dataset,
             batch_size=self.args.batch_size,
             shuffle=True,
-            pin_memory=False
+            pin_memory=use_pin_memory
         )
         
-        self.logger.info("Starting model training")
+        logger.info("Starting model training")
         train(
             model=self.model,
-            train_dataloader=dataloader,
+            train_dataloader=train_loader,
             epochs=self.args.num_epochs,
             lr=self.args.lr,
             steps_til_summary=100,
             epochs_til_checkpoint=1000,
             model_dir=self.root_path,
             loss_fn=self.loss_fn,
-            clip_grad=False,
-            use_lbfgs=False,
-            validation_fn=self.validate,
-            start_epoch=0
+            clip_grad=True,
+            validation_fn=self.validate
         )
 
-        self.logger.info("Saving experiment details")
+        logger.debug("Saving experiment details to %s", self.root_path)
         save_experiment_details(self.root_path, str(self.loss_fn), vars(self.args))
 
     def validate(self, model, ckpt_dir, epoch):
@@ -144,7 +150,7 @@ class DoubleIntegrator:
         num_times = len(times)
 
         # Create state space sampling grid
-        state_range = torch.linspace(-1.5, 1.5, 200)
+        state_range = torch.linspace(-1, 1, 200)
         fig, axes = plt.subplots(num_times, 1, figsize=(10, 15))
 
         for i, t in enumerate(times):
@@ -158,7 +164,13 @@ class DoubleIntegrator:
             model_out = model(model_in)['model_out'].detach().cpu().numpy()
             model_out = model_out.reshape(X.shape)
 
+            # Create filled contour plot
             contour = axes[i].contourf(X, V, model_out, levels=50, cmap='bwr')
+            
+            # Add zero level set
+            zero_contour = axes[i].contour(X, V, model_out, levels=[0], colors='k', linewidths=2)
+            axes[i].clabel(zero_contour, inline=True, fontsize=8)
+            
             axes[i].set_title(f"t = {t:.2f}")
             axes[i].set_xlabel("Position (x)")
             axes[i].set_ylabel("Velocity (v)")
@@ -217,7 +229,7 @@ class DoubleIntegrator:
         save_path = os.path.join(save_dir, save_file)
         plt.savefig(save_path)
         plt.close(fig)
-        self.logger.debug(f"Saved comparison plot at: {save_path}")
+        logger.debug(f"Saved comparison plot at: {save_path}")
 
     def compare_with_true_values(
         self, 
@@ -238,9 +250,10 @@ class DoubleIntegrator:
             current_dir = os.path.dirname(os.path.abspath(__file__))
             matlab_file_path = os.path.join(current_dir, self.DEFAULT_MATLAB_FILE)
 
-        self.logger.info(f"Loading true value function from: {matlab_file_path}")
+        logger.debug("Loading true value function from: %s", matlab_file_path)
         
         if not os.path.exists(matlab_file_path):
+            logger.error("MATLAB file not found: %s", matlab_file_path)
             raise FileNotFoundError(
                 f"MATLAB file not found at: {matlab_file_path}. "
                 f"Please ensure '{self.DEFAULT_MATLAB_FILE}' is in the same directory as double_integrator.py"
@@ -253,7 +266,7 @@ class DoubleIntegrator:
         matlab_data = load_matlab_data(matlab_file_path)
         
         # Compare with neural network
-        save_path = os.path.join(self.root_path[0], 'true_value_comparison.png')
+        save_path = os.path.join(self.root_path, 'DoubleIntegrator_true_value_comparison.png')
         difference, mse = compare_with_nn(
             self.model,
             matlab_data,
@@ -262,8 +275,8 @@ class DoubleIntegrator:
         )
         
         # Log results
-        self.logger.info(f"Comparison Results:")
-        self.logger.info(f"Mean Squared Error: {mse:.6f}")
-        self.logger.info(f"Max Absolute Error: {np.max(np.abs(difference)):.6f}")
+        logger.info("Comparison Results:")
+        logger.info("Mean Squared Error: %.6f", mse)
+        logger.info("Max Absolute Error: %.6f", np.max(np.abs(difference)))
             
         return difference, mse

@@ -62,5 +62,5 @@ def dreal_double_integrator_BRS(dreal_partials, dreal_variables, epsilon=0.5,
     with open(result_file, "w") as f:
         json.dump(result_data, f, indent=4)
 
-    logger.info(f"Saved result to {result_file}")
+    logger.debug(f"Saved result to {result_file}")
     return result_data

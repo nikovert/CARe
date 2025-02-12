@@ -35,8 +35,6 @@ def get_experiment_folder(logging_root, experiment_name):
     next_id = (numbered_folders[0][0] + 1) if numbered_folders else 1
     new_folder = f"{experiment_name}_{next_id}"
     new_folder_path = os.path.join(logging_root, new_folder)
-    
-    logger.info(f"Will create new experiment folder: {new_folder}")
     return new_folder_path, False, prev_folder_path
 
 def save_experiment_details(root_path, loss_fn, opt):

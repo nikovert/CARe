@@ -47,7 +47,8 @@ class CEGISLoop:
         start_time = time.time()
         
         while iteration_count < self.max_iterations:
-            logger.info(f"Starting iteration {iteration_count + 1} with epsilon: {self.current_epsilon}")
+            logger.info("Starting iteration %d with epsilon: %.4f", 
+                       iteration_count + 1, self.current_epsilon)
             
             # Only disable gradients for verification
             with torch.no_grad():
@@ -140,16 +141,16 @@ class CEGISLoop:
                 total_time=total_time
             )
 
-        logger.info(f"Best verification achieved with epsilon: {self.best_epsilon}")
-        logger.info("\nTiming Statistics:")
-        logger.info(f"Total time: {total_time:.2f} seconds")
+        logger.info("Best verification achieved with epsilon: %.4f", self.best_epsilon)
+        logger.info("Timing Statistics:")
+        logger.info("Total time: %.2f seconds", total_time)
         
         # Log timing statistics for each iteration
         for i, stats in enumerate(self.timing_history, 1):
-            logger.info(f"\nIteration {i}:")
-            logger.info(f"  Training time: {stats.training_time:.2f}s")
-            logger.info(f"  Symbolic model generation: {stats.symbolic_time:.2f}s")
-            logger.info(f"  dReal verification: {stats.verification_time:.2f}s")
+            logger.debug("Iteration %d:", i)
+            logger.debug("  Training time: %.2fs", stats.training_time)
+            logger.debug("  Symbolic model generation: %.2fs", stats.symbolic_time)
+            logger.debug("  dReal verification: %.2fs", stats.verification_time)
         
         self.example.model.cpu()
         self.example.model.load_state_dict(

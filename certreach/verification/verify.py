@@ -32,17 +32,19 @@ def verify_system(
         Tuple[dict, dict, Any]: (Verification results, Timing information, Symbolic model)
     """
     timing_info = {}
-    logger.info(f"Starting {system_type} verification")
+    logger.info("Starting %s verification", system_type)
     
-    logger.info("Extracting symbolic model")
+    logger.debug("Extracting symbolic model with epsilon=%.4f", epsilon)
     try:
         # Time symbolic model generation
         if symbolic_model is None:
             t_symbolic_start = time.time()
             symbolic_model = extract_symbolic_model(model, root_path)
             timing_info['symbolic_time'] = time.time() - t_symbolic_start
+            logger.debug("Symbolic model saved to %s", root_path)  # Add debug message
         else:
             timing_info['symbolic_time'] = 0.0
+            logger.debug("Reusing existing symbolic model")
 
         # Time dReal verification setup and execution
         t_verify_start = time.time()
@@ -61,12 +63,14 @@ def verify_system(
         )
         timing_info['verification_time'] = time.time() - t_verify_start
         
-        logger.info("Processing verification results")
-        logger.info(f"Symbolic generation took: {timing_info.get('symbolic_time', 0):.2f}s")
-        logger.info(f"Verification took: {timing_info['verification_time']:.2f}s")
+        logger.debug("Symbolic generation took: %.2fs", timing_info.get('symbolic_time', 0))
+        logger.debug("Verification took: %.2fs", timing_info['verification_time'])
         
-        return process_dreal_result(f"{root_path}/dreal_result.json"), timing_info, symbolic_model
+        result = process_dreal_result(f"{root_path}/dreal_result.json")
+        logger.info("Verification completed with result: %s", result.get('result', 'Unknown'))  # Add result logging
+        
+        return result, timing_info, symbolic_model
         
     except Exception as e:
-        logger.error(f"Verification failed: {str(e)}")
+        logger.error("Verification failed: %s", str(e))
         raise

@@ -98,7 +98,7 @@ def train(model: torch.nn.Module,
             for step, (model_input, gt) in enumerate(train_dataloader):
                 start_time = time.time()
             
-                # Move data to device after loading, handling CPU pinned memory correctly
+                # Move data to device
                 model_input = {key: value.to(device, non_blocking=True) for key, value in model_input.items()}
                 gt = {key: value.to(device, non_blocking=True) for key, value in gt.items()}
 
@@ -109,7 +109,6 @@ def train(model: torch.nn.Module,
                 if use_lbfgs:
                     def closure():
                         optim.zero_grad()
-                        model_input['coords'].requires_grad_(True)  # Ensure gradients
                         model_output = model(model_input)
                         losses = loss_fn(model_output, gt)
                         train_loss = sum(loss.mean() for loss in losses.values())
@@ -117,11 +116,9 @@ def train(model: torch.nn.Module,
                         return train_loss
                     optim.step(closure)
                 else:
-                    optim.zero_grad(set_to_none=True)  # More efficient than zero_grad()
+                    optim.zero_grad(set_to_none=True)
                     
-                    # Updated autocast context manager
                     with torch.autocast(device.type, enabled=use_amp):
-                        model_input['coords'].requires_grad_(True)  # Ensure gradients
                         model_output = model(model_input)
                         losses = loss_fn(model_output, gt)
 
@@ -138,7 +135,6 @@ def train(model: torch.nn.Module,
                 writer.add_scalar("total_train_loss", train_loss, total_steps)
 
                 if total_steps % steps_til_summary == 0:
-                    # Save current state
                     model.save_checkpoint(
                         name='model_current',
                         optimizer=optim,
@@ -166,9 +162,8 @@ def train(model: torch.nn.Module,
 
                     if val_dataloader:
                         logger.info("Running validation set...")
-                        model.eval()
+                        model.eval()  # Set to eval mode for validation
                         val_losses = []
-                        # Updated autocast for validation
                         with torch.no_grad(), torch.autocast(device.type, enabled=use_amp):
                             for val_input, val_gt in val_dataloader:
                                 val_input = {k: v.to(device, non_blocking=True) for k, v in val_input.items()}
@@ -179,7 +174,7 @@ def train(model: torch.nn.Module,
                             
                             avg_val_loss = torch.stack(val_losses).mean()
                             writer.add_scalar("val_loss", avg_val_loss.item(), total_steps)
-                        model.train()
+                        model.train()  # Set back to training mode after validation
 
                 total_steps += 1
 
