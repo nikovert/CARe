@@ -28,8 +28,10 @@ class HJILossFunction(ABC):
         du, _ = operators.jacobian(y, x)
         dudt = du[..., 0, 0]
         dudx = du[..., 0, 1:]
+        t = x[..., 0]
+        states = x[...,1:]
 
-        ham = self.compute_hamiltonian(x, dudx)
+        ham = self.compute_hamiltonian(states, dudx)
         ham = self._apply_reachability_logic(ham)
         ham = self._apply_minimization_constraint(ham)
 

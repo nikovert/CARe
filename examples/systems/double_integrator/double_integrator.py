@@ -13,8 +13,7 @@ from certreach.learning.networks import SingleBVPNet, NetworkConfig
 from certreach.common.matlab_loader import load_matlab_data, compare_with_nn
 from certreach.common.dataset import ReachabilityDataset
 
-from .verification import dreal_double_integrator_BRS
-from .loss import initialize_loss
+from .loss import initialize_loss, initialize_hamiltonian
 from examples.utils.experiment_utils import get_experiment_folder
 from examples.factories import register_example
 
@@ -31,19 +30,26 @@ def double_integrator_boundary(coords, radius=0.25):
 @register_example
 class DoubleIntegrator:
     Name = "double_integrator"
-    DEFAULT_MATLAB_FILE = "value_function.mat"  # Add this line
+    DEFAULT_MATLAB_FILE = "value_function.mat"
     NUM_STATES = 2  # Add this class variable to define number of states
 
     def __init__(self, args):
         self.args = args
         self.root_path = get_experiment_folder(args.logging_root, self.Name)
         self.device = torch.device(args.device)
+        
+        # Initialize input bounds
+        self.input_bounds = {
+            'min': torch.tensor([-args.input_max]),
+            'max': torch.tensor([args.input_max])
+        }
                 
         # Initialize model and other components only when needed
         self.model = None
         self.loss_fn = None
-        self.verification_fn = dreal_double_integrator_BRS  # Add this line
-        self.boundary_fn = double_integrator_boundary  # Add this line
+        self.hamiltonian_fn = None
+        self.boundary_fn = double_integrator_boundary
+
 
     def initialize_components(self):
         """Initialize dataset, model, and loss function"""
@@ -63,15 +69,18 @@ class DoubleIntegrator:
             self.model = SingleBVPNet(config=config).to(self.device)
 
         if self.loss_fn is None:
-            # Construct input bounds dictionary
-            input_bounds = {
-                'min': torch.tensor([-self.args.input_max]),  # Assuming symmetric bounds
-                'max': torch.tensor([self.args.input_max])
-            }
-            
             self.loss_fn = initialize_loss(
                 self.device,
-                input_bounds=input_bounds,
+                input_bounds=self.input_bounds,
+                minWith=self.args.minWith,
+                reachMode=self.args.reachMode,
+                reachAim=self.args.reachAim
+            )
+
+        if self.hamiltonian_fn is None:
+            self.hamiltonian_fn = initialize_hamiltonian(
+                self.device,
+                input_bounds=self.input_bounds,
                 minWith=self.args.minWith,
                 reachMode=self.args.reachMode,
                 reachAim=self.args.reachAim

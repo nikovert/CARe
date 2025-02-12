@@ -63,6 +63,10 @@ class CEGISLoop:
         iteration_count = 0
         start_time = time.time()
         model_config = self.example.model.get_config()
+        system_specifics = {
+            'name': self.example.Name,
+            'root_path': self.example.root_path
+        }
         while iteration_count < self.max_iterations:
             logger.info("Starting iteration %d with epsilon: %.4f", 
                        iteration_count + 1, self.current_epsilon)
@@ -75,10 +79,9 @@ class CEGISLoop:
             verification_result, timing_info, symbolic_model = verify_system(
                 model_state=model_state,
                 model_config=model_config,
-                root_path=self.example.root_path,
-                system_type=self.example.Name,
+                system_specifics=system_specifics,
+                compute_hamiltonian=self.example.hamiltonian_fn,
                 epsilon=self.current_epsilon,
-                verification_fn=self.example.verification_fn,
                 symbolic_model=self.current_symbolic_model
             )
             
