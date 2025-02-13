@@ -25,13 +25,13 @@ def parse_args():
                   help='Name of the experiment for logging purposes')
 
     # Training Settings
-    p.add_argument('--batch_size', type=int, default=128000,
+    p.add_argument('--batch_size', type=int, default=85000,
                   help='Number of points to sample per batch')
     p.add_argument('--lr', type=float, default=2e-5,
                   help='Learning rate for optimizer')
-    p.add_argument('--num_epochs', type=int, default=int(10e6),
+    p.add_argument('--num_epochs', type=int, default=int(10e5),
                   help='Number of training epochs')
-    p.add_argument('--epochs_til_ckpt', type=int, default=int(10e4),
+    p.add_argument('--epochs_til_ckpt', type=int, default=int(5000),
                   help='Number of epochs between model checkpoints')
 
     # Model Settings
@@ -45,7 +45,7 @@ def parse_args():
                   help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
-    p.add_argument('--num_nl', type=int, default=32,
+    p.add_argument('--num_nl', type=int, default=128,
                   help='Number of neurons per layer')
     p.add_argument('--use_polynomial', action='store_true', default=True,
                   help='Whether to use polynomial features')
@@ -69,7 +69,7 @@ def parse_args():
                   help='Whether to compute reachable set or tube')
 
     # Training Process Settings
-    p.add_argument('--pretrain_percentage', type=float, default=0.1,
+    p.add_argument('--pretrain_percentage', type=float, default=0.001,
                   help='Percentage of total steps to use for pretraining (0.0 to 1.0)')
     p.add_argument('--seed', type=int, default=0,
                   help='Random seed for reproducibility')

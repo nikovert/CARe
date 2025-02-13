@@ -21,18 +21,16 @@ def train(model: torch.nn.Module,
           epochs_til_checkpoint: int, 
           model_dir: str, 
           loss_fn: Callable, 
-          pretrain_percentage: float = 0.1,  # Added curriculum parameters
+          pretrain_percentage: float = 0.01,  # Added curriculum parameters
           time_min: float = 0.0,
           time_max: float = 1.0,
           clip_grad: bool = True, 
-          loss_schedules: Optional[Dict[str, Callable]] = None, 
           validation_fn: Optional[Callable] = None, 
           start_epoch: int = 0,
                     device: Optional[torch.device] = None,
           use_amp: bool = True,
           l1_lambda: float = 1e-4,  # Changed default to 1e-4 for L1 regularization
           weight_decay: float = 1e-5,  # Changed default to 1e-5 for L2 regularization
-          use_compile: bool = True,  # Added parameter for torch.compile
           **kwargs
           ) -> None:
     """
@@ -153,9 +151,10 @@ def train(model: torch.nn.Module,
                 # Save losses separately for analysis
                 np.savetxt(checkpoints_dir / f'train_losses_epoch_{epoch:04d}.txt',
                           np.array(train_losses))
-
+                train_losses = []
+                _, tmax = curriculum.get_time_range()
                 if validation_fn is not None:
-                    validation_fn(model, checkpoints_dir, epoch)
+                    validation_fn(model, checkpoints_dir, epoch, tmax=tmax)
 
                 gc.collect()
                 if device.type == 'cuda':
@@ -174,11 +173,11 @@ def train(model: torch.nn.Module,
                 losses = loss_fn(model_output, gt)
                 
                 # Get weights from curriculum
-                loss_weights = curriculum.get_loss_weights()
+                batch_size = model_input['coords'].shape[0]  # Assuming first dimension is batch size
+                loss_weights = curriculum.get_loss_weights(batch_size)
                 
                 # Apply weights to losses and normalize by batch size
-                batch_size = model_input['coords'].shape[0]  # Assuming first dimension is batch size
-                train_loss = sum((1000*loss.mean() / batch_size) * loss_weights.get(name, 1.0)
+                train_loss = sum(loss.mean() * loss_weights.get(name, 1.0)
                                 for name, loss in losses.items())
                 
                 # Calculate total loss and add L1 regularization using PyTorch's built-in function
@@ -204,7 +203,7 @@ def train(model: torch.nn.Module,
             train_losses.append(train_loss.item())
 
             # Simplified progress reporting
-            if epoch % (epochs //500) == 0:  # Report only 500 times during training
+            if epoch % max(100,(epochs //1000)) == 0:  # Report only 1000 times during training
                 tqdm.write(f"Epoch {epoch}, Loss: {train_loss:.6f}, Time: {time.time() - start_time:.3f}s")
                 curr_progress = curriculum.get_progress()
                 tmin, tmax = curriculum.get_time_range()

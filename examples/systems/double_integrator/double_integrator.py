@@ -111,6 +111,7 @@ class DoubleIntegrator:
             epochs_til_checkpoint=self.args.epochs_til_ckpt,
             model_dir=self.root_path,
             loss_fn=self.loss_fn,
+            pretrain_percentage=self.args.pretrain_percentage,
             time_min=self.args.tMin,
             time_max=self.args.tMax,
             validation_fn=self.validate,
@@ -118,11 +119,14 @@ class DoubleIntegrator:
             use_amp=True  # New parameter with default
         )
 
-    def validate(self, model, ckpt_dir, epoch):
+    def validate(self, model, ckpt_dir, epoch, tmax=None):
         """Validation function called during training"""
 
         # Define evaluation time points
-        times = [self.args.tMin, 0.5 * (self.args.tMin + self.args.tMax), self.args.tMax]
+        if tmax is None or tmax==self.args.tMax:
+            times = [self.args.tMin, 0.5*(self.args.tMin+self.args.tMax), self.args.tMax]
+        else:
+            times = [self.args.tMin, tmax, self.args.tMax]
         num_times = len(times)
 
         # Create state space sampling grid
