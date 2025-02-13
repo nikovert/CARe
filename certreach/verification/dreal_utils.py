@@ -4,8 +4,65 @@ import dreal
 import sympy
 import sympy
 import logging
+from dreal import And, Not, CheckSatisfiability
 
 logger = logging.getLogger(__name__)
+
+def verify_with_dreal(dreal_partials, dreal_variables, compute_hamiltonian, epsilon=0.5,
+                              reachMode='forward', 
+                              setType='set', save_directory="./"):
+    """Verifies if the HJB equation holds using dReal for a double integrator system."""
+    
+    # Extract time variable
+    t = dreal_variables["x_1_1"]
+    
+    # Extract state variables and partial derivatives dynamically
+    state_vars = []
+    partials = []
+    for i in range(2, len(dreal_variables) + 1):
+        state_vars.append(dreal_variables[f"x_1_{i}"])
+        partials.append(dreal_partials[f"partial_x_1_{i}"])
+
+    dv_dt = dreal_partials["partial_x_1_1"]
+
+    # Use class method for Hamiltonian computation
+    hamiltonian_value = compute_hamiltonian(state_vars, partials)
+
+    if reachMode == 'backward':
+        hamiltonian_value = -hamiltonian_value
+
+    # Define constraints
+    condition_1 = abs(dv_dt + hamiltonian_value) <= epsilon
+    condition_2 = abs(dv_dt) <= epsilon
+
+    if setType=='tube':
+        final_condition = Not(And(condition_1, condition_2))
+    else:
+        final_condition = Not(condition_1)
+
+    state_constraints = And(
+        t >= 0, t <= 1,
+        *[And(var >= -1, var <= 1) for var in state_vars]
+    )
+
+    all_constraints = And(final_condition, state_constraints)
+
+    # Check constraints
+    result = CheckSatisfiability(all_constraints, 1e-3)
+
+    # Save results
+    result_data = {
+        "epsilon": epsilon,
+        "set": f"{reachMode}_{setType}", 
+        "result": str(result) if result else "HJB Equation Satisfied"
+    }
+
+    result_file = f"{save_directory}/dreal_result.json"
+    with open(result_file, "w") as f:
+        json.dump(result_data, f, indent=4)
+
+    logger.debug(f"Saved result to {result_file}")
+    return result_data
 
 def convert_symbols_to_dreal(input_symbols):
     """
@@ -113,20 +170,22 @@ def sympy_to_dreal_converter(syms: dict, exp: sympy.Expr, to_number=lambda x: fl
     logger.error(f"Unsupported term: {exp} (type: {type(exp)})")
     raise ValueError(f"[Error] Unsupported term: {exp} (type: {type(exp)})")
 
-def extract_dreal_partials(final_symbolic_expression, in_features):
+def extract_dreal_partials(final_symbolic_expression):
     """
     Extracts dReal-compatible variables and partial derivatives 
     from a given symbolic expression.
 
     Args:
         final_symbolic_expression (sympy.Matrix): The symbolic expression from the neural network.
-        in_features (int): The number of input features in the model.
 
     Returns:
         dict: A dictionary containing dReal variables and their partial derivatives.
     """
-    # Define SymPy input symbols
-    input_symbols = sympy.Matrix([sympy.symbols(f"x_1_{i+1}") for i in range(in_features)])
+    # Get input symbols from first layer (x_1_1, x_1_2, etc.)
+    input_symbols = [sym for sym in final_symbolic_expression.free_symbols 
+                    if str(sym).startswith('x_1_')]
+    input_symbols.sort(key=lambda x: int(str(x).split('_')[2]))  # Sort by index
+    input_symbols = sympy.Matrix(input_symbols)
 
     # Compute symbolic partial derivatives
     partials = [final_symbolic_expression[0].diff(var) for var in input_symbols]
@@ -136,87 +195,20 @@ def extract_dreal_partials(final_symbolic_expression, in_features):
 
     # Convert symbolic partial derivatives to dReal expressions
     dreal_partials = {
-        f"partial_x_1_{i+1}": sympy_to_dreal_converter(dreal_variables, partial)
-        for i, partial in enumerate(partials)
+        f"partial_{str(var)}": sympy_to_dreal_converter(dreal_variables, partial)
+        for var, partial in zip(input_symbols, partials)
     }
 
-    # Return all relevant variables and partial derivatives
     return {
         "input_symbols": input_symbols,
         "partials": partials,
         "dreal_variables": dreal_variables,
         "dreal_partials": dreal_partials,
         **{f"sympy_partial_{i+1}": partial for i, partial in enumerate(partials)},
-        **{f"dreal_partial_{i+1}": dreal_partials[f"partial_x_1_{i+1}"] for i in range(in_features)}
+        **{f"dreal_partial_{i+1}": dreal_partials[f"partial_{str(input_symbols[i])}"] 
+           for i in range(len(input_symbols))}
     }
 
-def sympy_to_serializable(obj):
-    """
-    Converts SymPy expressions into JSON serializable strings.
-
-    This function ensures that complex SymPy objects such as matrices, dictionaries, 
-    and lists are converted into a format that can be saved as JSON. Floats are 
-    converted with high precision to avoid rounding errors.
-
-    Args:
-        obj: The SymPy object or any nested structure containing SymPy expressions.
-
-    Returns:
-        A JSON-compatible representation of the object.
-    """
-
-    # Check if the object is a SymPy Basic type (expression or number)
-    if isinstance(obj, sympy.Basic):
-        # Convert to string with 17 decimal places to preserve precision
-        return str(sympy.N(obj, 17))  
-
-    # Check if the object is a SymPy Matrix
-    if isinstance(obj, sympy.Matrix):
-        # Recursively process each element of the matrix
-        return [sympy_to_serializable(obj[i]) for i in range(obj.shape[0])]
-
-    # Check if the object is a dictionary
-    if isinstance(obj, dict):
-        # Recursively process each key-value pair in the dictionary
-        return {k: sympy_to_serializable(v) for k, v in obj.items()}
-
-    # Check if the object is a list
-    if isinstance(obj, list):
-        # Recursively process each element in the list
-        return [sympy_to_serializable(v) for v in obj]
-
-    # If the object is not recognized, return it as is
-    return obj
-
-def serializable_to_sympy(data):
-    """
-    Restores serialized strings back into SymPy expressions.
-
-    This function reconstructs SymPy objects from data stored as JSON-compatible
-    formats such as strings, lists, or dictionaries. It ensures that serialized 
-    symbolic expressions are correctly restored to SymPy types for further computation.
-
-    Args:
-        data: The serialized JSON-compatible data (strings, lists, or dictionaries).
-
-    Returns:
-        Restored SymPy expression, list, or dictionary of expressions.
-    """
-
-    # If the data is a string, attempt to parse it as a SymPy expression
-    if isinstance(data, str):
-        return sympy.sympify(data, evaluate=False)  # Prevent automatic simplification
-
-    # If the data is a list, process each element recursively
-    if isinstance(data, list):
-        return [serializable_to_sympy(v) for v in data]
-
-    # If the data is a dictionary, process each key-value pair recursively
-    if isinstance(data, dict):
-        return {k: serializable_to_sympy(v) for k, v in data.items()}
-
-    # If the data is neither string, list, nor dictionary, return as is
-    return data
 
 def process_dreal_result(json_path):
     """

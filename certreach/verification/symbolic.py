@@ -1,7 +1,9 @@
 import os
 import sympy
 from concurrent.futures import ProcessPoolExecutor
+from typing import Dict, Any
 import logging
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +78,8 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
         bias = sympy.Matrix(state_dict[bias_key].detach().cpu().numpy())
         current_output = weight * current_output + bias
 
-        # Check for activation and use correct frequency
-        if any('sine' in k for k in state_dict.keys()):
+        # Check activation type from config instead of state dict keys
+        if config.get('activation_type') == 'sine':
             frequency = config.get('sine_frequency', 30.0)
             current_output = current_output.applyfunc(lambda x: sine_transform(x, frequency))
 
@@ -169,22 +171,19 @@ def combine_all_layers_parallelized(state_dict, config, simplify=False):
     logger.info(f"All {num_layers} layers combined successfully.")
     return combined_symbolic_model
 
-def extract_symbolic_model(model, save_path):
+def extract_symbolic_model(state_dict: Dict[str, torch.Tensor], config: Dict[str, Any], save_path: str):
     """
-    Extracts a symbolic representation from the trained model and saves it.
+    Extracts a symbolic representation from the model state dictionary and config.
 
     Args:
-        model (torch.nn.Module): The trained PyTorch model
+        state_dict (Dict[str, torch.Tensor]): The model's state dictionary
+        config (Dict[str, Any]): The model's configuration dictionary
         save_path (str): Path to save the symbolic model
 
     Returns:
         str: The extracted symbolic model as a string
     """
     logger.info("Starting symbolic model extraction")
-    
-    # Extract necessary components
-    state_dict = model.state_dict()
-    config = model.config.to_dict()
     
     # Get and save symbolic expression
     symbolic_expression = combine_all_layers_parallelized(
@@ -201,3 +200,72 @@ def extract_symbolic_model(model, save_path):
         raise
 
     return symbolic_expression
+
+def serializable_to_sympy(data):
+    """
+    Restores serialized strings back into SymPy expressions.
+
+    This function reconstructs SymPy objects from data stored as JSON-compatible
+    formats such as strings, lists, or dictionaries. It ensures that serialized 
+    symbolic expressions are correctly restored to SymPy types for further computation.
+
+    Args:
+        data: The serialized JSON-compatible data (strings, lists, or dictionaries).
+
+    Returns:
+        Restored SymPy expression, list, or dictionary of expressions.
+    """
+
+    # If the data is a string, attempt to parse it as a SymPy expression
+    if isinstance(data, str):
+        return sympy.sympify(data, evaluate=False)  # Prevent automatic simplification
+
+    # If the data is a list, process each element recursively
+    if isinstance(data, list):
+        return [serializable_to_sympy(v) for v in data]
+
+    # If the data is a dictionary, process each key-value pair recursively
+    if isinstance(data, dict):
+        return {k: serializable_to_sympy(v) for k, v in data.items()}
+
+    # If the data is neither string, list, nor dictionary, return as is
+    return data
+
+def sympy_to_serializable(obj):
+    """
+    Converts SymPy expressions into JSON serializable strings.
+
+    This function ensures that complex SymPy objects such as matrices, dictionaries, 
+    and lists are converted into a format that can be saved as JSON. Floats are 
+    converted with high precision to avoid rounding errors.
+
+    Args:
+        obj: The SymPy object or any nested structure containing SymPy expressions.
+
+    Returns:
+        A JSON-compatible representation of the object.
+    """
+
+    # Check if the object is a SymPy Basic type (expression or number)
+    if isinstance(obj, sympy.Basic):
+        # Convert to string with 17 decimal places to preserve precision
+        return str(sympy.N(obj, 17))  
+
+    # Check if the object is a SymPy Matrix
+    if isinstance(obj, sympy.Matrix):
+        # Recursively process each element of the matrix
+        return [sympy_to_serializable(obj[i]) for i in range(obj.shape[0])]
+
+    # Check if the object is a dictionary
+    if isinstance(obj, dict):
+        # Recursively process each key-value pair in the dictionary
+        return {k: sympy_to_serializable(v) for k, v in obj.items()}
+
+    # Check if the object is a list
+    if isinstance(obj, list):
+        # Recursively process each element in the list
+        return [sympy_to_serializable(v) for v in obj]
+
+    # If the object is not recognized, return it as is
+    return obj
+

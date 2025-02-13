@@ -17,7 +17,6 @@ class HJILossFunction(ABC):
         x = model_output['model_in']
         y = model_output['model_out']
         dirichlet_mask = gt['dirichlet_mask']
-        batch_size = x.shape[1]
 
         # Ensure tensors are on the correct device
         source_boundary_values = source_boundary_values.to(self.device)
@@ -28,8 +27,10 @@ class HJILossFunction(ABC):
         du, _ = operators.jacobian(y, x)
         dudt = du[..., 0, 0]
         dudx = du[..., 0, 1:]
+        t = x[..., 0]
+        states = x[...,1:]
 
-        ham = self.compute_hamiltonian(x, dudx)
+        ham = self.compute_hamiltonian(states, dudx)
         ham = self._apply_reachability_logic(ham)
         ham = self._apply_minimization_constraint(ham)
 
@@ -40,13 +41,13 @@ class HJILossFunction(ABC):
             if self.minWith == 'target':
                 diff_constraint_hom = torch.max(diff_constraint_hom[:, :, None], y - source_boundary_values)
 
-        dirichlet_loss = self._compute_dirichlet_loss(y, source_boundary_values, dirichlet_mask, batch_size)
+        dirichlet_loss = self._compute_dirichlet_loss(y, source_boundary_values, dirichlet_mask)
         return {'dirichlet': dirichlet_loss, 'diff_constraint_hom': torch.abs(diff_constraint_hom).sum()}
 
-    def _compute_dirichlet_loss(self, y, source_boundary_values, dirichlet_mask, batch_size):
+    def _compute_dirichlet_loss(self, y, source_boundary_values, dirichlet_mask):
         """Compute Dirichlet boundary condition loss."""
         dirichlet = y[dirichlet_mask] - source_boundary_values[dirichlet_mask]
-        return torch.abs(dirichlet).sum() * batch_size / 15e2
+        return torch.abs(dirichlet).sum()
 
     def _apply_minimization_constraint(self, ham):
         """Apply minimization constraint to Hamiltonian."""

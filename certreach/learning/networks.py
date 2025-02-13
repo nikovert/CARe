@@ -423,11 +423,16 @@ class SingleBVPNet(torch.nn.Module):
     def forward(self, model_input, params=None):
         if params is None:
             params = OrderedDict(self.named_parameters())
-        # Enables us to compute gradients w.r.t. coordinates
-        coords_org = model_input['coords'].clone().detach().requires_grad_(True)
+        # Ensures input is on same device as model
+        coords_org = model_input['coords'].to(self.device, non_blocking=True)
         coords = coords_org
         output = self.net(coords)
         return {'model_in': coords_org, 'model_out': output}
+
+    @property
+    def device(self):
+        """Get the device where the model parameters are"""
+        return next(self.parameters()).device
 
     def print_network_info(self):
         """Print network architecture and parameter information."""

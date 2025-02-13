@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 import time
@@ -7,9 +8,9 @@ from pathlib import Path
 import shutil
 import logging
 from typing import Callable, Optional, Dict
-from torch.cuda.amp import autocast, GradScaler
 from .curriculum import Curriculum
 from ..common.dataset import ReachabilityDataset
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +21,18 @@ def train(model: torch.nn.Module,
           epochs_til_checkpoint: int, 
           model_dir: str, 
           loss_fn: Callable, 
-          pretrain_percentage: float = 0.1,  # Added curriculum parameters
+          pretrain_percentage: float = 0.01,  # Added curriculum parameters
           time_min: float = 0.0,
           time_max: float = 1.0,
-          clip_grad: bool = False, 
-          loss_schedules: Optional[Dict[str, Callable]] = None, 
+          clip_grad: bool = True, 
           validation_fn: Optional[Callable] = None, 
           start_epoch: int = 0,
                     device: Optional[torch.device] = None,
-          use_amp: bool = True) -> None:
+          use_amp: bool = True,
+          l1_lambda: float = 1e-4,  # Changed default to 1e-4 for L1 regularization
+          weight_decay: float = 1e-5,  # Changed default to 1e-5 for L2 regularization
+          **kwargs
+          ) -> None:
     """
     Train a model using curriculum learning for reachability problems.
     
@@ -49,6 +53,8 @@ def train(model: torch.nn.Module,
         start_epoch: Epoch to start or resume training from
         device: Device to use for training (default: CUDA if available, else CPU)
         use_amp: Whether to use automatic mixed precision training
+        l1_lambda: L1 regularization strength
+        weight_decay: L2 regularization strength
     
     Raises:
         TypeError: If dataset is not an instance of ReachabilityDataset
@@ -62,13 +68,29 @@ def train(model: torch.nn.Module,
     """
     if not isinstance(dataset, ReachabilityDataset):
         raise TypeError(f"Dataset must be an instance of ReachabilityDataset, got {type(dataset)}")
+    
+    # Enable automatic mixed precision for CUDA devices
+    use_amp = device.type == 'cuda'
+    scaler = torch.amp.GradScaler() if use_amp else None  # Updated GradScaler import
+    
+    # Enable CUDA optimizations
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
 
-    # Use provided device or default to CUDA if available
-    device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if device.type == 'cuda':
+        logger.info(f"Using GPU: {torch.cuda.get_device_name(device)}")
+        logger.info(f"Available GPU memory: {torch.cuda.get_device_properties(device).total_memory / 1024**3:.2f} GB")
+
+    # Ensure model and data are on the correct device
     model = model.to(device)
     
-    # Initialize optimizer first as it's needed for curriculum scheduler
-    optim = torch.optim.Adam(model.parameters(), lr=lr)
+    # Configure optimizer with device-specific settings
+    optim = torch.optim.Adam(
+        model.parameters(),
+        lr=lr,
+        weight_decay=weight_decay,
+        **kwargs
+    )
 
     # Initialize curriculum
     curriculum = Curriculum(
@@ -80,7 +102,7 @@ def train(model: torch.nn.Module,
     )
 
     # Initialize gradient scaler for AMP
-    scaler = torch.GradScaler() if use_amp and device.type == 'cuda' else None
+    scaler = torch.amp.GradScaler() if use_amp and device.type == 'cuda' else None  # Updated GradScaler import
 
     # Load the checkpoint if required
     if start_epoch > 0:
@@ -105,20 +127,14 @@ def train(model: torch.nn.Module,
 
     # Make sure all path operations use Path consistently
     model_dir = Path(model_dir)
-    summaries_dir = model_dir / 'summaries'
     checkpoints_dir = model_dir / 'checkpoints'
 
-    summaries_dir.mkdir(parents=True, exist_ok=True)
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     model.checkpoint_dir = checkpoints_dir  # Set checkpoint directory for model
 
-    writer = SummaryWriter(summaries_dir)
-
-    total_steps = 0
-    steps_til_summary = int(epochs/1000)
     with tqdm(total=epochs) as pbar:
         train_losses = []
-        for epoch in range(start_epoch, epochs):
+        for epoch in range(start_epoch, epochs): 
             start_time = time.time()
             # Update curriculum scheduler epoch at the start of each epoch
             curriculum.step()
@@ -135,13 +151,20 @@ def train(model: torch.nn.Module,
                 # Save losses separately for analysis
                 np.savetxt(checkpoints_dir / f'train_losses_epoch_{epoch:04d}.txt',
                           np.array(train_losses))
-
+                train_losses = []
+                _, tmax = curriculum.get_time_range()
                 if validation_fn is not None:
-                    validation_fn(model, checkpoints_dir, epoch)
+                    validation_fn(model, checkpoints_dir, epoch, tmax=tmax)
+
+                gc.collect()
+                if device.type == 'cuda':
+                    torch.cuda.empty_cache()
 
             # Get a fresh batch of data
             model_input, gt = dataset.get_batch()
-
+            
+            # Ensure coords requires gradients
+            model_input['coords'].requires_grad_(True)
             
             optim.zero_grad(set_to_none=True)
             
@@ -150,34 +173,19 @@ def train(model: torch.nn.Module,
                 losses = loss_fn(model_output, gt)
                 
                 # Get weights from curriculum
-                loss_weights = curriculum.get_loss_weights()
+                batch_size = model_input['coords'].shape[0]  # Assuming first dimension is batch size
+                loss_weights = curriculum.get_loss_weights(batch_size)
                 
                 # Apply weights to losses and normalize by batch size
-                batch_size = model_input['coords'].shape[0]  # Assuming first dimension is batch size
-                weighted_losses = {
-                    name: (1000*loss.mean() / batch_size) * loss_weights.get(name, 1.0)
-                    for name, loss in losses.items()
-                }
+                train_loss = sum(loss.mean() * loss_weights.get(name, 1.0)
+                                for name, loss in losses.items())
                 
-                train_loss = sum(weighted_losses.values())
-
-            # Log both raw and weighted losses
-            for loss_name, loss in losses.items():
-                raw_loss = 1000*loss.mean() / batch_size  # Normalize raw loss
-                weight = loss_weights.get(loss_name, 1.0)
-                weighted_loss = raw_loss * weight
-                
-                writer.add_scalar(f"{loss_name}/raw", raw_loss, total_steps)
-                writer.add_scalar(f"{loss_name}/weight", weight, total_steps)
-                writer.add_scalar(f"{loss_name}/weighted", weighted_loss, total_steps)
-                
-                if loss_schedules and loss_name in loss_schedules:
-                    schedule_weight = loss_schedules[loss_name](total_steps)
-                    writer.add_scalar(f"{loss_name}/schedule_weight", schedule_weight, total_steps)
-                    weighted_loss *= schedule_weight
-
-            train_losses.append(train_loss.item())
-            writer.add_scalar("total_train_loss", train_loss, total_steps)
+                # Calculate total loss and add L1 regularization using PyTorch's built-in function
+                if l1_lambda > 0:
+                    l1_loss = torch.tensor(0., device=device)
+                    for param in model.parameters():
+                        l1_loss += F.l1_loss(param, torch.zeros_like(param), reduction='sum')
+                    train_loss += l1_lambda * l1_loss
 
             if scaler is not None:
                 scaler.scale(train_loss).backward()
@@ -192,19 +200,16 @@ def train(model: torch.nn.Module,
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optim.step()
 
-            if total_steps % steps_til_summary == 0:
-                tqdm.write(f"Epoch {epoch}, Total loss {train_loss:.6f}, "
-                            f"iteration time {time.time() - start_time:.6f}")
+            train_losses.append(train_loss.item())
+
+            # Simplified progress reporting
+            if epoch % max(100,(epochs //1000)) == 0:  # Report only 1000 times during training
+                tqdm.write(f"Epoch {epoch}, Loss: {train_loss:.6f}, Time: {time.time() - start_time:.3f}s")
                 curr_progress = curriculum.get_progress()
                 tmin, tmax = curriculum.get_time_range()
                 phase = "Pretraining" if curriculum.is_pretraining else "Curriculum"
-                tqdm.write(f"{phase} phase - Progress: {curr_progress:.2%}, Time range: [{tmin:.3f}, {tmax:.3f}]")
+                tqdm.write(f"{phase} - Progress: {curr_progress:.2%}, Time range: [{tmin:.3f}, {tmax:.3f}]")
 
-                # Add curriculum progress to tensorboard
-                writer.add_scalar("curriculum/progress", curr_progress, total_steps)
-                writer.add_scalar("curriculum/time_max", tmax, total_steps)
-
-            total_steps += 1
             pbar.update(1)
 
         # Save final model

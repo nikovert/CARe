@@ -37,7 +37,7 @@ class Curriculum:
         if self.current_step < self.pretrain_percentage*self.total_steps:
             return 0.0
         else:
-            progress = (self.current_step/self.total_steps - self.pretrain_percentage)/(1 - self.pretrain_percentage)
+            progress = 2*(self.current_step/self.total_steps - self.pretrain_percentage)/(1 - self.pretrain_percentage)
             return min(progress, 1.0)
 
     def get_time_range(self) -> tuple[float, float]:
@@ -50,26 +50,25 @@ class Curriculum:
     def is_pretraining(self) -> bool:
         return not (self.get_progress() > 0.0)
     
-    def get_loss_weights(self) -> Dict[str, float]:
+    def get_loss_weights(self, batch_size) -> Dict[str, float]:
         """
         Returns weights for different loss components based on current curriculum state.
         
         Returns:
             Dict[str, float]: Dictionary mapping loss names to their weights
         """
-        progress = self.get_progress()
         
         if self.is_pretraining:
             # During pretraining, focus more on Dirichlet boundary conditions
             weights = {
-                'dirichlet': 1.0,
-                'diff_constraint_hom': 0.0
+                'dirichlet': batch_size / 15e2,
+                'diff_constraint_hom': 1.0
             }
         else:
             # Gradually increase importance of homogeneous differential constraint
             weights = {
-                'dirichlet': 1.0,
-                'diff_constraint_hom': min(1.0, 0.5 + 0.5 * progress)
+                'dirichlet': batch_size / 15e2,
+                'diff_constraint_hom': 1.0
             }
         
         return weights
