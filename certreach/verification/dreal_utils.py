@@ -5,10 +5,19 @@ import sympy
 import sympy
 import logging
 from dreal import And, Not, CheckSatisfiability
+import concurrent.futures
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-def verify_with_dreal(dreal_partials, dreal_variables, compute_hamiltonian, epsilon=0.5,
+def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[dreal.Box]:
+    """Helper function to check a single constraint."""
+    logger.debug(f"Starting constraint check with precision {precision}")
+    result = CheckSatisfiability(constraint, precision)
+    logger.debug(f"Constraint check completed. Found counterexample: {result is not None}")
+    return result
+
+def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5,
                               reachMode='forward', 
                               setType='set', save_directory="./"):
     """Verifies if the HJB equation holds using dReal for a double integrator system."""
@@ -31,24 +40,71 @@ def verify_with_dreal(dreal_partials, dreal_variables, compute_hamiltonian, epsi
     if reachMode == 'backward':
         hamiltonian_value = -hamiltonian_value
 
-    # Define constraints
+    # Define derivative constraints
     condition_1 = abs(dv_dt + hamiltonian_value) <= epsilon
     condition_2 = abs(dv_dt) <= epsilon
 
     if setType=='tube':
-        final_condition = Not(And(condition_1, condition_2))
+        derivative_condition = Not(And(condition_1, condition_2))
     else:
-        final_condition = Not(condition_1)
+        derivative_condition = Not(condition_1)
 
+    # Define boundary constraints (assuming T=1)
+    boundary_value = compute_boundary(state_vars)
+    boundary_condition = abs(d_real_value_fn - boundary_value) > epsilon
+
+    # Define State constraints
     state_constraints = And(
         t >= 0, t <= 1,
         *[And(var >= -1, var <= 1) for var in state_vars]
     )
 
-    all_constraints = And(final_condition, state_constraints)
+    initial_state_constraints = And(
+        t == 0,
+        *[And(var >= -1, var <= 1) for var in state_vars]
+    )
 
-    # Check constraints
-    result = CheckSatisfiability(all_constraints, 1e-3)
+    boundary_constraints = And(boundary_condition, initial_state_constraints)
+    derivative_constraints = And(derivative_condition, state_constraints)
+
+    # Run constraint checks in parallel
+    logger.info("Starting parallel constraint checks...")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        # Start both checks
+        logger.debug("Submitting boundary and derivative constraint checks")
+        future_boundary = executor.submit(_check_constraint, boundary_constraints, 1e-3)
+        future_derivative = executor.submit(_check_constraint, derivative_constraints, 1e-3)
+        
+        # Wait for first task to complete
+        logger.debug("Waiting for first task to complete...")
+        done, not_done = concurrent.futures.wait(
+            [future_boundary, future_derivative],
+            return_when=concurrent.futures.FIRST_COMPLETED
+        )
+
+        # Get result from first completed task
+        result = None
+        for future in done:
+            result = future.result()
+            if result:  # If we found a counterexample
+                logger.info("Found counterexample in first completed task. Cancelling remaining task.")
+                for remaining in not_done:
+                    remaining.cancel()
+                break
+        
+        # If no counterexample was found, wait for other task to complete
+        if not result and not_done:
+            logger.debug("No counterexample found in first task. Waiting for second task...")
+            done_remaining, _ = concurrent.futures.wait(not_done)
+            for future in done_remaining:
+                result = future.result()
+                if result:
+                    logger.info("Found counterexample in second task.")
+                    break
+
+    logger.info("Parallel constraint checks completed.")
+    if not result:
+        logger.info("No counterexamples found in either task.")
 
     # Save results
     result_data = {
@@ -172,7 +228,7 @@ def sympy_to_dreal_converter(syms: dict, exp: sympy.Expr, to_number=lambda x: fl
 
 def extract_dreal_partials(final_symbolic_expression):
     """
-    Extracts dReal-compatible variables and partial derivatives 
+    Extracts dReal-compatible variables, value_function and partial derivatives 
     from a given symbolic expression.
 
     Args:
@@ -199,16 +255,19 @@ def extract_dreal_partials(final_symbolic_expression):
         for var, partial in zip(input_symbols, partials)
     }
 
+    # Convert symbolic value function to dReal expression - fix by accessing first element
+    d_real_value_fn = sympy_to_dreal_converter(dreal_variables, final_symbolic_expression[0])
+
     return {
         "input_symbols": input_symbols,
         "partials": partials,
         "dreal_variables": dreal_variables,
         "dreal_partials": dreal_partials,
+        "d_real_value_fn": d_real_value_fn,
         **{f"sympy_partial_{i+1}": partial for i, partial in enumerate(partials)},
         **{f"dreal_partial_{i+1}": dreal_partials[f"partial_{str(input_symbols[i])}"] 
            for i in range(len(input_symbols))}
     }
-
 
 def process_dreal_result(json_path):
     """

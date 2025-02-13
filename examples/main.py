@@ -45,7 +45,7 @@ def parse_args():
                   help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
-    p.add_argument('--num_nl', type=int, default=128,
+    p.add_argument('--num_nl', type=int, default=32,
                   help='Number of neurons per layer')
     p.add_argument('--use_polynomial', action='store_true', default=True,
                   help='Whether to use polynomial features')
@@ -255,26 +255,16 @@ def main():
     configure_logging(log_file)
     example.root_path = exp_folder_path
 
-    # Handle quick mode with loaded model
-    if loaded_model and args.run_mode == 'train' and args.quick_mode:
-        logger.info("Quick mode with existing model: Skipping training phase")
-        args.run_mode = 'verify'
-
     # Run based on mode
     if args.run_mode == 'train':
         logger.info("Starting training with " + ("loaded" if loaded_model else "new") + " model")
         example.train()
     
     elif args.run_mode == 'verify':
+        if not loaded_model:
+            logger.error("No model loaded for verification")
+            return
         logger.info("Starting verification phase")
-        if not hasattr(example, 'model') or example.model is None:
-            example.initialize_components()
-            model_dir = os.path.join(args.logging_root, args.example)
-            model_path = find_best_model_path(model_dir)
-            if not model_path or not load_model_safely(example, model_path, device):
-                logger.error("No valid model found for verification")
-                return
-
         example.verify()
         # Plot results with current epsilon
         dreal_result_path = f"{example.root_path}/dreal_result.json"
@@ -292,20 +282,10 @@ def main():
 
     elif args.run_mode == 'cegis':
         logger.info("Starting CEGIS phase")
-        if not hasattr(example, 'model') or example.model is None:
-            example.initialize_components()
-            model_dir = os.path.join(args.logging_root, args.example)
-            model_path = find_best_model_path(model_dir)
-            if model_path:
-                load_model_safely(example, model_path, device)
         
         logger.info(f"Starting {'quick' if args.quick_mode else 'full'} CEGIS loop")
-        logger.info(f"Parameters: epochs={args.num_epochs}, "
-                f"max_iterations={args.max_iterations}, "
-                f"epsilon={args.epsilon}")
-        
         cegis = CEGISLoop(example, args)
-        result = cegis.run()
+        result = cegis.run(train_first=not loaded_model)
         
         example.plot_final_model(example.model, example.root_path, result.epsilon)
         logger.info(f"CEGIS {'completed' if result.success else 'failed'}. "

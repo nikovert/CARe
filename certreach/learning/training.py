@@ -77,10 +77,6 @@ def train(model: torch.nn.Module,
     if device.type == 'cuda':
         torch.backends.cudnn.benchmark = True
 
-    if device.type == 'cuda':
-        logger.info(f"Using GPU: {torch.cuda.get_device_name(device)}")
-        logger.info(f"Available GPU memory: {torch.cuda.get_device_properties(device).total_memory / 1024**3:.2f} GB")
-
     # Ensure model and data are on the correct device
     model = model.to(device)
     
@@ -142,10 +138,9 @@ def train(model: torch.nn.Module,
             if epoch % epochs_til_checkpoint == 0 and epoch > 0:
                 # Save periodic checkpoint using model's method
                 model.save_checkpoint(
-                    name=f'model_epoch_{epoch:04d}',
+                    name='model_current',
                     optimizer=optim,
-                    epoch=epoch,
-                    train_losses=train_losses
+                    epoch=epoch
                 )
                 
                 # Save losses separately for analysis
@@ -217,7 +212,6 @@ def train(model: torch.nn.Module,
             name='model_final',
             optimizer=optim,
             epoch=epochs,
-            train_losses=train_losses,
             training_completed=True
         )
 
