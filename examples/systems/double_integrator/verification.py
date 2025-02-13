@@ -1,4 +1,3 @@
-import torch
 from dreal import And, Not, CheckSatisfiability
 import json
 import logging

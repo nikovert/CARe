@@ -8,40 +8,79 @@ import shutil
 import logging
 from typing import Callable, Optional, Dict
 from torch.cuda.amp import autocast, GradScaler
+from .curriculum import Curriculum
+from ..common.dataset import ReachabilityDataset
 
 logger = logging.getLogger(__name__)
 
 def train(model: torch.nn.Module, 
-          train_dataloader: torch.utils.data.DataLoader, 
+          dataset: ReachabilityDataset,  # Updated type hint
           epochs: int, 
           lr: float, 
-          steps_til_summary: int, 
           epochs_til_checkpoint: int, 
           model_dir: str, 
           loss_fn: Callable, 
-          summary_fn: Optional[Callable] = None, 
-          val_dataloader: Optional[torch.utils.data.DataLoader] = None, 
-          double_precision: bool = False, 
+          pretrain_percentage: float = 0.1,  # Added curriculum parameters
+          time_min: float = 0.0,
+          time_max: float = 1.0,
           clip_grad: bool = False, 
-          use_lbfgs: bool = False, 
           loss_schedules: Optional[Dict[str, Callable]] = None, 
           validation_fn: Optional[Callable] = None, 
           start_epoch: int = 0,
-          device: Optional[torch.device] = None,
+                    device: Optional[torch.device] = None,
           use_amp: bool = True) -> None:
+    """
+    Train a model using curriculum learning for reachability problems.
+    
+    Args:
+        model: Neural network model to train
+        dataset: Dataset for training, must be a ReachabilityDataset instance
+        epochs: Total number of training epochs
+        lr: Learning rate for the Adam optimizer
+        epochs_til_checkpoint: Number of epochs between saving checkpoints
+        model_dir: Directory to save model checkpoints and tensorboard logs
+        loss_fn: Loss function that takes model output and ground truth as input
+        pretrain_percentage: Fraction of total epochs to spend in pretraining phase (0 to 1)
+        time_min: Minimum time value for curriculum learning
+        time_max: Maximum time value for curriculum learning
+        clip_grad: Whether to clip gradients during training
+        loss_schedules: Dictionary of callable schedules for each loss component
+        validation_fn: Optional function to run validation during checkpoints
+        start_epoch: Epoch to start or resume training from
+        device: Device to use for training (default: CUDA if available, else CPU)
+        use_amp: Whether to use automatic mixed precision training
+    
+    Raises:
+        TypeError: If dataset is not an instance of ReachabilityDataset
+    
+    Notes:
+        - Uses curriculum learning with two phases:
+          1. Pretraining phase: Trains on a subset of time values
+          2. Curriculum phase: Gradually increases the time range
+        - Saves checkpoints periodically and logs metrics to tensorboard
+        - Supports automatic mixed precision training on CUDA devices
+    """
+    if not isinstance(dataset, ReachabilityDataset):
+        raise TypeError(f"Dataset must be an instance of ReachabilityDataset, got {type(dataset)}")
 
     # Use provided device or default to CUDA if available
     device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
     
-    # Initialize gradient scaler for AMP without device_type
-    scaler = torch.GradScaler() if use_amp and device.type == 'cuda' else None
-
+    # Initialize optimizer first as it's needed for curriculum scheduler
     optim = torch.optim.Adam(model.parameters(), lr=lr)
 
-    if use_lbfgs:
-        optim = torch.optim.LBFGS(model.parameters(), lr=lr, max_iter=50000, max_eval=50000,
-                                  history_size=50, line_search_fn='strong_wolfe')
+    # Initialize curriculum
+    curriculum = Curriculum(
+        dataset=dataset,
+        pretrain_percentage=pretrain_percentage,
+        total_steps=epochs,
+        time_min=time_min,
+        time_max=time_max
+    )
+
+    # Initialize gradient scaler for AMP
+    scaler = torch.GradScaler() if use_amp and device.type == 'cuda' else None
 
     # Load the checkpoint if required
     if start_epoch > 0:
@@ -76,9 +115,14 @@ def train(model: torch.nn.Module,
     writer = SummaryWriter(summaries_dir)
 
     total_steps = 0
-    with tqdm(total=len(train_dataloader) * epochs) as pbar:
+    steps_til_summary = int(epochs/1000)
+    with tqdm(total=epochs) as pbar:
         train_losses = []
         for epoch in range(start_epoch, epochs):
+            start_time = time.time()
+            # Update curriculum scheduler epoch at the start of each epoch
+            curriculum.step()
+            
             if epoch % epochs_til_checkpoint == 0 and epoch > 0:
                 # Save periodic checkpoint using model's method
                 model.save_checkpoint(
@@ -95,88 +139,73 @@ def train(model: torch.nn.Module,
                 if validation_fn is not None:
                     validation_fn(model, checkpoints_dir, epoch)
 
-            for step, (model_input, gt) in enumerate(train_dataloader):
-                start_time = time.time()
+            # Get a fresh batch of data
+            model_input, gt = dataset.get_batch()
+
             
-                # Move data to device
-                model_input = {key: value.to(device, non_blocking=True) for key, value in model_input.items()}
-                gt = {key: value.to(device, non_blocking=True) for key, value in gt.items()}
+            optim.zero_grad(set_to_none=True)
+            
+            with torch.autocast(device.type, enabled=use_amp):
+                model_output = model(model_input)
+                losses = loss_fn(model_output, gt)
+                
+                # Get weights from curriculum
+                loss_weights = curriculum.get_loss_weights()
+                
+                # Apply weights to losses and normalize by batch size
+                batch_size = model_input['coords'].shape[0]  # Assuming first dimension is batch size
+                weighted_losses = {
+                    name: (1000*loss.mean() / batch_size) * loss_weights.get(name, 1.0)
+                    for name, loss in losses.items()
+                }
+                
+                train_loss = sum(weighted_losses.values())
 
-                if double_precision:
-                    model_input = {key: value.double() for key, value in model_input.items()}
-                    gt = {key: value.double() for key, value in gt.items()}
+            # Log both raw and weighted losses
+            for loss_name, loss in losses.items():
+                raw_loss = 1000*loss.mean() / batch_size  # Normalize raw loss
+                weight = loss_weights.get(loss_name, 1.0)
+                weighted_loss = raw_loss * weight
+                
+                writer.add_scalar(f"{loss_name}/raw", raw_loss, total_steps)
+                writer.add_scalar(f"{loss_name}/weight", weight, total_steps)
+                writer.add_scalar(f"{loss_name}/weighted", weighted_loss, total_steps)
+                
+                if loss_schedules and loss_name in loss_schedules:
+                    schedule_weight = loss_schedules[loss_name](total_steps)
+                    writer.add_scalar(f"{loss_name}/schedule_weight", schedule_weight, total_steps)
+                    weighted_loss *= schedule_weight
 
-                if use_lbfgs:
-                    def closure():
-                        optim.zero_grad()
-                        model_output = model(model_input)
-                        losses = loss_fn(model_output, gt)
-                        train_loss = sum(loss.mean() for loss in losses.values())
-                        train_loss.backward()
-                        return train_loss
-                    optim.step(closure)
-                else:
-                    optim.zero_grad(set_to_none=True)
-                    
-                    with torch.autocast(device.type, enabled=use_amp):
-                        model_output = model(model_input)
-                        losses = loss_fn(model_output, gt)
+            train_losses.append(train_loss.item())
+            writer.add_scalar("total_train_loss", train_loss, total_steps)
 
-                        train_loss = sum(loss.mean() for loss in losses.values())
+            if scaler is not None:
+                scaler.scale(train_loss).backward()
+                if clip_grad:
+                    scaler.unscale_(optim)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optim)
+                scaler.update()
+            else:
+                train_loss.backward()
+                if clip_grad:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optim.step()
 
-                for loss_name, loss in losses.items():
-                    single_loss = loss.mean()
-                    if loss_schedules and loss_name in loss_schedules:
-                        writer.add_scalar(f"{loss_name}_weight", loss_schedules[loss_name](total_steps), total_steps)
-                        single_loss *= loss_schedules[loss_name](total_steps)
-                    writer.add_scalar(loss_name, single_loss, total_steps)
+            if total_steps % steps_til_summary == 0:
+                tqdm.write(f"Epoch {epoch}, Total loss {train_loss:.6f}, "
+                            f"iteration time {time.time() - start_time:.6f}")
+                curr_progress = curriculum.get_progress()
+                tmin, tmax = curriculum.get_time_range()
+                phase = "Pretraining" if curriculum.is_pretraining else "Curriculum"
+                tqdm.write(f"{phase} phase - Progress: {curr_progress:.2%}, Time range: [{tmin:.3f}, {tmax:.3f}]")
 
-                train_losses.append(train_loss.item())
-                writer.add_scalar("total_train_loss", train_loss, total_steps)
+                # Add curriculum progress to tensorboard
+                writer.add_scalar("curriculum/progress", curr_progress, total_steps)
+                writer.add_scalar("curriculum/time_max", tmax, total_steps)
 
-                if total_steps % steps_til_summary == 0:
-                    model.save_checkpoint(
-                        name='model_current',
-                        optimizer=optim,
-                        epoch=epoch,
-                        step=total_steps
-                    )
-
-                if scaler is not None:
-                    scaler.scale(train_loss).backward()
-                    if clip_grad:
-                        scaler.unscale_(optim)
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    scaler.step(optim)
-                    scaler.update()
-                else:
-                    train_loss.backward()
-                    if clip_grad:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    optim.step()
-
-                pbar.update(1)
-
-                if total_steps % steps_til_summary == 0:
-                    tqdm.write(f"Epoch {epoch}, Total loss {train_loss:.6f}, iteration time {time.time() - start_time:.6f}")
-
-                    if val_dataloader:
-                        logger.info("Running validation set...")
-                        model.eval()  # Set to eval mode for validation
-                        val_losses = []
-                        with torch.no_grad(), torch.autocast(device.type, enabled=use_amp):
-                            for val_input, val_gt in val_dataloader:
-                                val_input = {k: v.to(device, non_blocking=True) for k, v in val_input.items()}
-                                val_gt = {k: v.to(device, non_blocking=True) for k, v in val_gt.items()}
-                                val_output = model(val_input)
-                                val_batch_losses = loss_fn(val_output, val_gt)
-                                val_losses.append(sum(loss.mean() for loss in val_batch_losses.values()))
-                            
-                            avg_val_loss = torch.stack(val_losses).mean()
-                            writer.add_scalar("val_loss", avg_val_loss.item(), total_steps)
-                        model.train()  # Set back to training mode after validation
-
-                total_steps += 1
+            total_steps += 1
+            pbar.update(1)
 
         # Save final model
         model.save_checkpoint(
@@ -190,13 +219,3 @@ def train(model: torch.nn.Module,
         # Save final losses
         np.savetxt(checkpoints_dir / 'train_losses_final.txt', 
                    np.array(train_losses))
-
-
-class LinearDecaySchedule:
-    def __init__(self, start_val: float, final_val: float, num_steps: int):
-        self.start_val = start_val
-        self.final_val = final_val
-        self.num_steps = num_steps
-
-    def __call__(self, step: int) -> float:
-        return self.start_val + (self.final_val - self.start_val) * min(step / self.num_steps, 1.0)
