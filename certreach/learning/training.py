@@ -199,7 +199,10 @@ def train(model: torch.nn.Module,
 
             # Simplified progress reporting
             if epoch % max(100,(epochs //1000)) == 0:  # Report only 1000 times during training
-                tqdm.write(f"Epoch {epoch}, Loss: {train_loss:.6f}, Time: {time.time() - start_time:.3f}s")
+                tqdm.write(f"Epoch {epoch}, Total Loss: {train_loss:.6f},"
+                          f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
+                          f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}, "
+                          f"Time: {time.time() - start_time:.3f}s")
                 curr_progress = curriculum.get_progress()
                 tmin, tmax = curriculum.get_time_range()
                 phase = "Pretraining" if curriculum.is_pretraining else "Curriculum"

@@ -100,8 +100,15 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
             
         current_output = weight * current_output + bias
 
-        # Check activation type from config instead of state dict keys
-        if config.get('activation_type') == 'sine':
+        # Check if this is the last layer by looking for next layer's weights
+        is_last_layer = True
+        for key in state_dict:
+            if f'net.{layer_number}.0.weight' in key:
+                is_last_layer = False
+                break
+
+        # Only apply sine activation if it's not the last layer
+        if not is_last_layer and config.get('activation_type') == 'sine':
             frequency = config.get('sine_frequency', 30.0)
             current_output = current_output.applyfunc(lambda x: sine_transform(x, frequency))
 

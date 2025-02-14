@@ -45,7 +45,7 @@ def parse_args():
                   help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
-    p.add_argument('--num_nl', type=int, default=16,
+    p.add_argument('--num_nl', type=int, default=4,
                   help='Number of neurons per layer')
     p.add_argument('--use_polynomial', action='store_true', default=True,
                   help='Whether to use polynomial features')
@@ -241,8 +241,6 @@ def main():
     # Try to load model from previous experiment folder if it exists
     if prev_folder_path:
         loaded_model = try_load_model_from_folder(example, prev_folder_path, device, logger)
-        if loaded_model:
-            logger.info(f"Loaded model from previous experiment: {prev_folder_path}")
 
     # Print model information
     logger.info("Model Architecture:")
