@@ -22,10 +22,18 @@ mp.set_start_method('spawn', force=True)
 
 logger = logging.getLogger(__name__)  # Move logger to module level
 
-def double_integrator_boundary(coords, radius=0.25):
-        pos = coords[:, 1:3]  # Extract [x, v]
-        boundary_values = torch.norm(pos, dim=1, keepdim=True)
-        return boundary_values - radius
+def double_integrator_boundary(states, radius=0.25):
+    """Compute boundary values for both PyTorch tensors and dReal variables."""
+    # Check if using PyTorch tensors
+    using_torch = isinstance(states, torch.Tensor)
+    
+    if using_torch:
+        return torch.norm(states, dim=1, keepdim=True) - radius
+    else:
+        # dReal mode - coords will be a list of variables [t, x, v]
+        x, v = states[0], states[1]
+        # Manual computation of L2 norm for dReal
+        return (x * x + v * v)**0.5 - radius
 
 @register_example
 class DoubleIntegrator:
@@ -49,7 +57,6 @@ class DoubleIntegrator:
         self.loss_fn = None
         self.hamiltonian_fn = None
         self.boundary_fn = double_integrator_boundary
-
 
     def initialize_components(self):
         """Initialize dataset, model, and loss function"""

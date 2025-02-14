@@ -17,6 +17,7 @@ def verify_system(
     model_config: Dict[str, Any],
     system_specifics: Dict[str, Any],
     compute_hamiltonian: Callable,
+    compute_boundary: Callable,
     epsilon: float,
     symbolic_model: Optional[Any] = None
 ) -> Tuple[Dict[str, Any], Dict[str, float], Any]:
@@ -54,9 +55,11 @@ def verify_system(
         
         logger.info("Running dReal verification")
         verify_with_dreal(
+            d_real_value_fn=result["d_real_value_fn"],
             dreal_partials=result["dreal_partials"],
             dreal_variables=result["dreal_variables"],
             compute_hamiltonian=compute_hamiltonian,
+            compute_boundary=compute_boundary,
             epsilon=epsilon,
             reachMode='forward',
             setType='set',

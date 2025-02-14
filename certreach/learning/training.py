@@ -29,8 +29,8 @@ def train(model: torch.nn.Module,
           start_epoch: int = 0,
                     device: Optional[torch.device] = None,
           use_amp: bool = True,
-          l1_lambda: float = 1e-4,  # Changed default to 1e-4 for L1 regularization
-          weight_decay: float = 1e-5,  # Changed default to 1e-5 for L2 regularization
+          l1_lambda: float = 1e-2,  # Changed default to 1e-4 for L1 regularization
+          weight_decay: float = 1e-2,  # Changed default to 1e-5 for L2 regularization
           **kwargs
           ) -> None:
     """
@@ -76,10 +76,6 @@ def train(model: torch.nn.Module,
     # Enable CUDA optimizations
     if device.type == 'cuda':
         torch.backends.cudnn.benchmark = True
-
-    if device.type == 'cuda':
-        logger.info(f"Using GPU: {torch.cuda.get_device_name(device)}")
-        logger.info(f"Available GPU memory: {torch.cuda.get_device_properties(device).total_memory / 1024**3:.2f} GB")
 
     # Ensure model and data are on the correct device
     model = model.to(device)
@@ -142,10 +138,9 @@ def train(model: torch.nn.Module,
             if epoch % epochs_til_checkpoint == 0 and epoch > 0:
                 # Save periodic checkpoint using model's method
                 model.save_checkpoint(
-                    name=f'model_epoch_{epoch:04d}',
+                    name='model_current',
                     optimizer=optim,
-                    epoch=epoch,
-                    train_losses=train_losses
+                    epoch=epoch
                 )
                 
                 # Save losses separately for analysis
@@ -204,7 +199,10 @@ def train(model: torch.nn.Module,
 
             # Simplified progress reporting
             if epoch % max(100,(epochs //1000)) == 0:  # Report only 1000 times during training
-                tqdm.write(f"Epoch {epoch}, Loss: {train_loss:.6f}, Time: {time.time() - start_time:.3f}s")
+                tqdm.write(f"Epoch {epoch}, Total Loss: {train_loss:.6f},"
+                          f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
+                          f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}, "
+                          f"Time: {time.time() - start_time:.3f}s")
                 curr_progress = curriculum.get_progress()
                 tmin, tmax = curriculum.get_time_range()
                 phase = "Pretraining" if curriculum.is_pretraining else "Curriculum"
@@ -217,7 +215,6 @@ def train(model: torch.nn.Module,
             name='model_final',
             optimizer=optim,
             epoch=epochs,
-            train_losses=train_losses,
             training_completed=True
         )
 

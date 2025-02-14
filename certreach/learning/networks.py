@@ -86,45 +86,68 @@ class Sine(torch.nn.Module):
         return torch.sin(self.frequency * input)
 
 class PolynomialFunction(torch.autograd.Function):
-    """Custom autograd function for polynomial computation."""
+    """Custom autograd function for polynomial computation with special time handling."""
     
     @staticmethod
     def forward(ctx, input, degree):
         """
-        Compute polynomial terms up to the specified degree.
+        Compute polynomial terms up to specified degree, keeping time component linear.
         
         Args:
             ctx: Context object to save variables for backward
-            input (torch.Tensor): Input tensor
-            degree (int): Highest degree of polynomial
+            input (torch.Tensor): Input tensor where first component is time
+            degree (int): Highest degree of polynomial for state variables
         """
         ctx.degree = degree
         ctx.save_for_backward(input)
         
-        # Compute polynomial terms [x, x^2, ..., x^degree]
-        results = [input**i for i in range(1, degree + 1)]
+        # Split input into time and states
+        time = input[..., :1]  # Keep time component
+        states = input[..., 1:]  # State components
+        
+        # Time remains linear
+        results = [time]
+        
+        # Compute polynomial terms for states [x, x^2, ..., x^degree]
+        for i in range(1, degree + 1):
+            if i == 1:
+                results.append(states)  # Linear terms for states
+            else:
+                results.append(states**i)  # Higher order terms only for states
+                
         return torch.cat(results, dim=-1)
 
     @staticmethod
     def backward(ctx, grad_output):
         """
-        Compute gradient of the loss with respect to the input.
-        
-        Args:
-            ctx: Context object with saved variables
-            grad_output: Gradient of the loss with respect to the output
+        Compute gradient with special handling for time component.
         """
         input, = ctx.saved_tensors
         degree = ctx.degree
         
-        # Split grad_output into chunks corresponding to each polynomial term
-        chunks = grad_output.chunk(degree, dim=-1)
+        # Calculate output feature size for states
+        state_features = input.shape[-1] - 1  # Subtract time component
+        state_terms = state_features * degree
+        time_terms = 1  # Time stays linear
         
-        # Compute gradient for each term: d(x^n)/dx = n * x^(n-1)
+        # Split grad_output into time and state chunks
+        grad_time = grad_output[..., :time_terms]
+        grad_states = grad_output[..., time_terms:]
+        
+        # Initialize gradient tensors
         grad_input = torch.zeros_like(input)
-        for i, grad in enumerate(chunks):
+        
+        # Time gradient (linear)
+        grad_input[..., 0:1] = grad_time
+        
+        # State gradients
+        state_chunks = grad_states.chunk(degree, dim=-1)
+        for i, grad in enumerate(state_chunks):
             power = i + 1  # polynomial term degree (1-based)
-            grad_input += power * (input ** (power - 1)) * grad
+            if power == 1:
+                grad_input[..., 1:] += grad
+            else:
+                grad_input[..., 1:] += power * (input[..., 1:] ** (power - 1)) * grad
             
         return grad_input, None  # None for degree parameter
 
@@ -132,20 +155,25 @@ class PolynomialLayer(torch.nn.Module):
     def __init__(self, in_features, out_features, degree=2):
         """
         A custom layer that computes polynomial features using custom backward propagation.
+        Time component (first feature) stays linear while state components get polynomial terms.
 
         Args:
             in_features (int): Number of input features
-            out_features (int): Number of output features (in_features * degree)
-            degree (int): Highest degree of polynomial terms
+            out_features (int): Number of output features
+            degree (int): Highest degree of polynomial terms (for state components only)
         """
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.degree = degree
         
-        if out_features != in_features * degree:
-            raise ValueError(f"out_features must be in_features * degree. "
-                           f"Got {out_features} != {in_features} * {degree}")
+        # Calculate expected output features:
+        # 1 (time stays linear) + (in_features-1)*degree (polynomial terms for states)
+        expected_out_features = 1 + (in_features - 1) * degree
+        
+        if out_features != expected_out_features:
+            raise ValueError(f"out_features must be 1 + (in_features-1)*degree. "
+                           f"Got {out_features} != {expected_out_features}")
 
     def forward(self, x):
         """
@@ -236,12 +264,14 @@ class SingleBVPNet(torch.nn.Module):
             
             # Optional polynomial layer
             if config.use_polynomial:
+                # Calculate correct output features for polynomial layer
+                poly_out_features = 1 + (current_dim - 1) * config.poly_degree  # 1 for time + state features * degree
                 layers.append(PolynomialLayer(
                     in_features=current_dim,
-                    out_features=current_dim * config.poly_degree,
+                    out_features=poly_out_features,
                     degree=config.poly_degree
                 ))
-                current_dim *= config.poly_degree
+                current_dim = poly_out_features
 
             # Input layer
             layers.append(self._create_layer_block(

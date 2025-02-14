@@ -11,17 +11,20 @@ def sine_transform(x, frequency=30.0):
     """Helper function for sine transformation."""
     return sympy.sin(frequency * x)
 
-def power_transform(x, power):
+def power_transform(x, power, is_time=False):
     """Helper function for polynomial transformation."""
+    if is_time:  # Time component stays linear
+        return x
     return x**power
 
 class SymbolicPolynomialTransform:
     """A picklable class for polynomial transformations."""
-    def __init__(self, power):
+    def __init__(self, power, is_time=False):
         self.power = power
+        self.is_time = is_time
     
     def __call__(self, x):
-        return power_transform(x, self.power)
+        return power_transform(x, self.power, self.is_time)
 
 def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
     """
@@ -43,7 +46,7 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
         # For polynomial layer, get input features from the next layer's weight
         for name, param in state_dict.items():
             if f'net.1.0.weight' in name:  # Look at the next layer after polynomial
-                in_features = param.shape[1] // config.get('poly_degree', 2)
+                in_features = 1 + (param.shape[1]-1) // config.get('poly_degree', 2)  # +1 for time
                 break
     else:
         # Normal layer feature detection
@@ -62,11 +65,24 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
     current_output = input_symbols
 
     # Process layer using state dict values
-    if config.get('use_polynomial', False) and layer_number == 1:  # Polynomial layer is always first if used
-        poly_terms = []
+    if config.get('use_polynomial', False) and layer_number == 1:  # Polynomial layer
+        # Split time and state components
+            
+        time = current_output[0]  # First component is time
+        
+        # Handle case where there are no state variables
+        states = sympy.Matrix(current_output[1:])  # Convert states slice to Matrix
+        
+        poly_terms = [sympy.Matrix([time])]  # Time stays linear
+        
+        # Apply polynomial transformation only to states
         for i in range(1, config.get('poly_degree', 2) + 1):
-            transformer = SymbolicPolynomialTransform(i)
-            poly_terms.append(current_output.applyfunc(transformer))
+            if i == 1:
+                poly_terms.append(states)  # Linear terms for states
+            else:
+                transformer = SymbolicPolynomialTransform(i, is_time=False)
+                poly_terms.append(states.applyfunc(transformer))
+                
         current_output = sympy.Matrix.vstack(*poly_terms)
     
     # Get weight and bias from state dict
@@ -76,10 +92,23 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
     if weight_key in state_dict and bias_key in state_dict:
         weight = sympy.Matrix(state_dict[weight_key].detach().cpu().numpy())
         bias = sympy.Matrix(state_dict[bias_key].detach().cpu().numpy())
+        
+        # Add dimension check
+        if current_output.shape[0] == 0 or weight.shape[1] != current_output.shape[0]:
+            raise ValueError(f"Matrix dimension mismatch: weight matrix has shape {weight.shape}, "
+                           f"but current output has shape {current_output.shape}")
+            
         current_output = weight * current_output + bias
 
-        # Check activation type from config instead of state dict keys
-        if config.get('activation_type') == 'sine':
+        # Check if this is the last layer by looking for next layer's weights
+        is_last_layer = True
+        for key in state_dict:
+            if f'net.{layer_number}.0.weight' in key:
+                is_last_layer = False
+                break
+
+        # Only apply sine activation if it's not the last layer
+        if not is_last_layer and config.get('activation_type') == 'sine':
             frequency = config.get('sine_frequency', 30.0)
             current_output = current_output.applyfunc(lambda x: sine_transform(x, frequency))
 

@@ -10,8 +10,6 @@
                 "--example", "double_integrator",
                 "--run_mode", "train",
                 "--logging_root", "./logs",
-                "--model_type", "sine",
-                "--model_mode", "mlp"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -44,8 +42,6 @@
                 "--example", "double_integrator",
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
-                "--model_type", "sine",
-                "--model_mode", "mlp",
                 "--quick_mode"
             ],
             "console": "integratedTerminal",
@@ -63,8 +59,6 @@
                 "--example", "double_integrator",
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
-                "--epsilon", "0.35",
-                "--max_iterations", "100"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,

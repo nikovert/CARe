@@ -46,15 +46,8 @@ class ReachabilityDataset(Dataset):
         self.num_states = num_states
 
         if compute_boundary_values is None:
-            # Default spherical boundary
-            def default_boundary(coords):
-                pos = coords[:, 1:1+num_states]  # Extract state variables
-                boundary_values = torch.norm(pos, dim=1, keepdim=True)
-                return boundary_values - 0.25  # Default radius
-            
-            self.compute_boundary_values = default_boundary
-        else:
-            self.compute_boundary_values = compute_boundary_values
+            raise ValueError("compute_boundary_values function must be specified")
+        self.compute_boundary_values = compute_boundary_values
 
         # Counterexample parameters
         self.counterexamples = counterexamples.to(self.device) if counterexamples is not None else None
@@ -152,8 +145,8 @@ class ReachabilityDataset(Dataset):
         # Add observation dimension
         coords = coords.unsqueeze(1)  # [batch_size, 1, num_dims]
 
-        # Compute boundary values and add observation dimension
-        boundary_values = self.compute_boundary_values(coords.squeeze(1)).unsqueeze(1)
+        # Compute boundary values and add observation dimension, only pass states, not time
+        boundary_values = self.compute_boundary_values(coords[...,1:].squeeze(1)).unsqueeze(1)
         
         # Create Dirichlet mask with observation dimension
         dirichlet_mask = (coords[:, :, 0] == start_time)

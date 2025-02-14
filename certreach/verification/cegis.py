@@ -59,7 +59,7 @@ class CEGISLoop:
             epsilon_radius=args.epsilon_radius
         )
         
-    def run(self) -> CEGISResult:
+    def run(self, train_first = True) -> CEGISResult:
         """Run the CEGIS loop with proper CUDA memory management."""
         iteration_count = 0
         start_time = time.time()
@@ -70,7 +70,7 @@ class CEGISLoop:
         }
 
         # Initial training if starting from scratch
-        if not hasattr(self.example.model, 'checkpoint_dir'):
+        if train_first:
             logger.info("Starting initial training before verification loop")
             train_start = time.time()
             train(
@@ -103,6 +103,7 @@ class CEGISLoop:
                 model_config=model_config,
                 system_specifics=system_specifics,
                 compute_hamiltonian=self.example.hamiltonian_fn,
+                compute_boundary=self.example.boundary_fn,
                 epsilon=self.current_epsilon,
                 symbolic_model=self.current_symbolic_model
             )
