@@ -29,8 +29,8 @@ def train(model: torch.nn.Module,
           start_epoch: int = 0,
                     device: Optional[torch.device] = None,
           use_amp: bool = True,
-          l1_lambda: float = 1e-4,  # Changed default to 1e-4 for L1 regularization
-          weight_decay: float = 1e-5,  # Changed default to 1e-5 for L2 regularization
+          l1_lambda: float = 1e-2,  # Changed default to 1e-4 for L1 regularization
+          weight_decay: float = 1e-2,  # Changed default to 1e-5 for L2 regularization
           **kwargs
           ) -> None:
     """

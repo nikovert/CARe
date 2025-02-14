@@ -29,7 +29,7 @@ def parse_args():
                   help='Number of points to sample per batch')
     p.add_argument('--lr', type=float, default=2e-5,
                   help='Learning rate for optimizer')
-    p.add_argument('--num_epochs', type=int, default=int(10e5),
+    p.add_argument('--num_epochs', type=int, default=int(0.5*10e5),
                   help='Number of training epochs')
     p.add_argument('--epochs_til_ckpt', type=int, default=int(5000),
                   help='Number of epochs between model checkpoints')
@@ -45,7 +45,7 @@ def parse_args():
                   help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
-    p.add_argument('--num_nl', type=int, default=4,
+    p.add_argument('--num_nl', type=int, default=32,
                   help='Number of neurons per layer')
     p.add_argument('--use_polynomial', action='store_true', default=True,
                   help='Whether to use polynomial features')
