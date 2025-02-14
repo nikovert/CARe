@@ -75,7 +75,7 @@ def parse_args():
                   help='Random seed for reproducibility')
 
     # Verification Settings
-    p.add_argument('--epsilon', type=float, default=0.35,
+    p.add_argument('--epsilon', type=float, default=0.01,
                   help='Initial epsilon for verification')
     p.add_argument('--min_epsilon', type=float, default=0.01,
                   help='Minimum epsilon to achieve before terminating CEGIS')
@@ -259,6 +259,11 @@ def main():
     if args.run_mode == 'train':
         logger.info("Starting training with " + ("loaded" if loaded_model else "new") + " model")
         example.train()
+            
+        # Add comparison with true values if requested
+        if args.check_solution:
+            logger.info("Comparing results with true values...")
+            example.compare_with_true_values()
     
     elif args.run_mode == 'verify':
         if not loaded_model:

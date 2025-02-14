@@ -63,8 +63,6 @@
                 "--example", "double_integrator",
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
-                "--epsilon", "0.35",
-                "--max_iterations", "100"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
