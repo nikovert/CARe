@@ -44,6 +44,8 @@ class CEGISLoop:
         self.timing_history = []
         self.current_symbolic_model = None
         self.min_epsilon = args.min_epsilon
+        self.pruning_threshold = getattr(args, 'pruning_threshold', 0.01)  # Default threshold if not specified
+        self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
                 
         # Initialize dataset if not already existing
         self.dataset = ReachabilityDataset(
@@ -88,6 +90,31 @@ class CEGISLoop:
                 device=self.device
             )
             self.last_training_time = time.time() - train_start
+            
+            # Prune the model after initial training if enabled
+            if self.prune_after_initial:
+                logger.info(f"Pruning model with threshold {self.pruning_threshold}")
+                stats = self.example.model.prune_weights(self.pruning_threshold)
+                logger.info(f"Pruning stats: {stats}")
+                
+                # Retrain the pruned model
+                logger.info("Retraining pruned model")
+                train_start = time.time()
+                train(
+                    model=self.example.model,
+                    dataset=self.dataset,
+                    epochs=self.args.num_epochs // 2,  # Shorter training period for fine-tuning
+                    lr=self.args.lr * 0.1,  # Lower learning rate for fine-tuning
+                    epochs_til_checkpoint=self.args.epochs_til_ckpt,
+                    model_dir=self.example.root_path,
+                    loss_fn=self.example.loss_fn,
+                    pretrain_percentage=0.0,  # No pretraining needed
+                    time_min=self.args.tMin,
+                    time_max=self.args.tMax,
+                    validation_fn=self.example.validate,
+                    device=self.device
+                )
+                self.last_training_time += time.time() - train_start
 
         while iteration_count < self.max_iterations:
             logger.info("Starting iteration %d with epsilon: %.4f", 
@@ -147,7 +174,7 @@ class CEGISLoop:
                     model=self.example.model,
                     dataset=self.dataset,
                     epochs=self.args.num_epochs,
-                    lr=self.args.lr,
+                    lr=self.args.lr * 0.1,  # Lower learning rate to maintain pruned weights
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
@@ -226,6 +253,14 @@ class CEGISLoop:
             self.best_epsilon,
             save_file="Final_Best_Model_Comparison.png"
         )
+        
+        # Include pruning information in the final model stats
+        if self.example.model.is_pruned:
+            pruning_stats = self.example.model.get_pruning_statistics()
+            logger.info("Final pruning statistics:")
+            logger.info(f"Pruning ratio: {pruning_stats['pruning_ratio']:.2%}")
+            logger.info(f"Pruned parameters: {pruning_stats['pruned_params']}")
+            logger.info(f"Total parameters: {pruning_stats['total_params']}")
         
         return CEGISResult(
             epsilon=self.best_epsilon,

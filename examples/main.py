@@ -29,7 +29,7 @@ def parse_args():
                   help='Number of points to sample per batch')
     p.add_argument('--lr', type=float, default=2e-5,
                   help='Learning rate for optimizer')
-    p.add_argument('--num_epochs', type=int, default=int(0.5*10e5),
+    p.add_argument('--num_epochs', type=int, default=int(0.2*10e5),
                   help='Number of training epochs')
     p.add_argument('--epochs_til_ckpt', type=int, default=int(5000),
                   help='Number of epochs between model checkpoints')
