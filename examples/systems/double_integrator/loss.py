@@ -21,39 +21,48 @@ class DoubleIntegratorLoss(HJILossFunction):
 
     def compute_hamiltonian(self, x, p):
         """Compute the Hamiltonian for the Double Integrator system."""
-        # Check if inputs are PyTorch tensors
         using_torch = isinstance(p[0] if isinstance(p, (list, tuple)) else p[..., 0], torch.Tensor)
         
-        # Extract components based on input type
         if using_torch:
             p1, p2 = p[..., 0], p[..., 1]
             x1, x2 = x[..., 0], x[..., 1]
         else:
-            # dReal mode
             p1, p2 = p[0], p[1]
             x1, x2 = x[0], x[1]
             
         ham = p1 * x2
 
-        if using_torch:
-            if self.reachAim == 'avoid':
-                ham += torch.where(p2 >= 0, 
-                                 self.input_min * p2,
-                                 self.input_max * p2)
-            elif self.reachAim == 'reach':
-                ham += torch.where(p2 >= 0, 
-                                 self.input_max * p2,
-                                 self.input_min * p2)
+        # Check if control bounds are symmetric
+        if torch.allclose(self.input_max, -self.input_min):
+            input_magnitude = self.input_max  # or abs(self.input_min)
+            sign = 1 if self.reachAim == 'reach' else -1
+            if using_torch:
+                # Use torch.abs(p2) instead of multiplication for efficiency
+                ham += sign * input_magnitude * torch.abs(p2)
+            else:
+                # Use dreal.Max to compute absolute value: |p2| = Max(p2, -p2)
+                abs_p2 = dreal.Max(p2, -p2)
+                ham += sign * float(input_magnitude.item()) * abs_p2
         else:
-            input_min = float(self.input_min.item())
-            input_max = float(self.input_max.item())
-            
-            # Use dreal.if_then_else for conditional expressions
-            if self.reachAim == 'avoid':
-                return ham + dreal.if_then_else(p2 >= 0, input_min * p2, input_max * p2)
-            elif self.reachAim == 'reach':
-                return ham + dreal.if_then_else(p2 >= 0, input_max * p2, input_min * p2)
-            
+            # Update asymmetric bounds branch with arithmetic formulation
+            if using_torch:
+                if self.reachAim == 'avoid':
+                    ham += torch.where(p2 >= 0, self.input_min * p2, self.input_max * p2)
+                else:  # reach
+                    ham += torch.where(p2 >= 0, self.input_max * p2, self.input_min * p2)
+            else:
+                # Replace if_then_else with arithmetic operations:
+                a = float(self.input_max.item())
+                b = float(self.input_min.item())
+                abs_p2 = dreal.Max(p2, -p2)
+                # For reach: use a when p2>=0, and b when p2<0, expressed as:
+                #   (a+b)/2 * p2 + (a-b)/2 * |p2|
+                # For avoid: flip the sign on the absolute value term
+                if self.reachAim == 'reach':
+                    ham += ((a + b)/2 * p2 + (a - b)/2 * abs_p2)
+                else:  # avoid
+                    ham += ((a + b)/2 * p2 - (a - b)/2 * abs_p2)
+        
         return ham
 
 def initialize_loss(dataset, input_bounds, minWith='none', reachMode='backward', reachAim='reach'):
