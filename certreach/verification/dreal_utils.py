@@ -18,7 +18,7 @@ def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[d
     return result
 
 def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5,
-                      reachMode='forward', setType='set', save_directory="./", execution_mode="parallel"):
+                      reachMode='forward', setType='set', save_directory="./", execution_mode="sequential"):
     """
     Verifies if the HJB equation holds using dReal for a double integrator system.
     
@@ -229,6 +229,17 @@ def sympy_to_dreal_converter(syms: dict, exp: sympy.Expr, to_number=lambda x: fl
                 # Convert the argument and apply the corresponding dReal function
                 arg = sympy_to_dreal_converter(syms, exp.args[0], to_number, expand_pow)
                 return dreal_func(arg)
+
+        # Handle Heaviside expressions using dreal.if_then_else
+        if isinstance(exp, sympy.Heaviside):
+            arg = sympy_to_dreal_converter(syms, exp.args[0], to_number, expand_pow)
+            return dreal.if_then_else(arg < 0, 0, 1)
+        
+    # Handle Max/Min expressions
+    elif isinstance(exp, sympy.Max) or isinstance(exp, sympy.Min):
+        arg1 = sympy_to_dreal_converter(syms, exp.args[0], to_number, expand_pow)
+        arg2 = sympy_to_dreal_converter(syms, exp.args[1], to_number, expand_pow)
+        return dreal.Max(arg1, arg2) if isinstance(exp, sympy.Max) else dreal.Min(arg1, arg2)
 
     # Raise an error if the term is unsupported
     logger.error(f"Unsupported term: {exp} (type: {type(exp)})")

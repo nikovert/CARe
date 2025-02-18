@@ -113,10 +113,14 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
                 is_last_layer = False
                 break
 
-        # Only apply sine activation if it's not the last layer
-        if not is_last_layer and config.get('activation_type') == 'sine':
-            frequency = config.get('sine_frequency', 30.0)
-            current_output = current_output.applyfunc(lambda x: sine_transform(x, frequency))
+        # Apply activation if not the last layer
+        if not is_last_layer:
+            act_type = config.get('activation_type')
+            if act_type == 'sine':
+                frequency = config.get('sine_frequency', 30.0)
+                current_output = current_output.applyfunc(lambda x: sine_transform(x, frequency))
+            elif act_type == 'relu':
+                current_output = current_output.applyfunc(lambda x: sympy.Max(0, x))
 
     logger.info(f"Successfully generated symbolic output for layer {layer_number}")
     return current_output

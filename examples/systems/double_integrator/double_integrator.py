@@ -68,7 +68,7 @@ class DoubleIntegrator:
                 out_features=self.args.out_features,
                 hidden_features=self.args.num_nl,
                 num_hidden_layers=self.args.num_hl,
-                activation_type='sine',  # Default to sine activation
+                activation_type=self.args.model_type, 
                 use_polynomial=self.args.use_polynomial,
                 poly_degree=self.args.poly_degree
             )
