@@ -2,8 +2,8 @@ import json
 from dreal import Variable
 import dreal
 import sympy
-import sympy
 import logging
+import time 
 from dreal import And, Not, CheckSatisfiability
 import concurrent.futures
 from typing import Optional
@@ -18,9 +18,15 @@ def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[d
     return result
 
 def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5,
-                              reachMode='forward', 
-                              setType='set', save_directory="./"):
-    """Verifies if the HJB equation holds using dReal for a double integrator system."""
+                      reachMode='forward', setType='set', save_directory="./", execution_mode="parallel"):
+    """
+    Verifies if the HJB equation holds using dReal for a double integrator system.
+    
+    Parameters:
+      ...
+      execution_mode (str): "parallel" (default) runs constraint checks concurrently,
+                            "sequential" runs the boundary and derivative checks in sequence while timing each.
+    """
     
     # Extract time variable
     t = dreal_variables["x_1_1"]
@@ -44,7 +50,7 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     condition_1 = abs(dv_dt + hamiltonian_value) <= epsilon
     condition_2 = abs(dv_dt) <= epsilon
 
-    if setType=='tube':
+    if setType=='tube': # this can be parallelized
         derivative_condition = Not(And(condition_1, condition_2))
     else:
         derivative_condition = Not(condition_1)
@@ -66,57 +72,59 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
 
     boundary_constraints = And(boundary_condition, initial_state_constraints)
     derivative_constraints = And(derivative_condition, state_constraints)
-
-    # Run constraint checks in parallel
-    logger.info("Starting parallel constraint checks...")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        # Start both checks
-        logger.debug("Submitting boundary and derivative constraint checks")
-        future_boundary = executor.submit(_check_constraint, boundary_constraints, 1e-3)
-        future_derivative = executor.submit(_check_constraint, derivative_constraints, 1e-3)
-        
-        # Wait for first task to complete
-        logger.debug("Waiting for first task to complete...")
-        done, not_done = concurrent.futures.wait(
-            [future_boundary, future_derivative],
-            return_when=concurrent.futures.FIRST_COMPLETED
-        )
-
-        # Get result from first completed task
-        result = None
-        for future in done:
-            result = future.result()
-            if result:  # If we found a counterexample
-                logger.info("Found counterexample in first completed task. Cancelling remaining task.")
-                for remaining in not_done:
-                    remaining.cancel()
-                break
-        
-        # If no counterexample was found, wait for other task to complete
-        if not result and not_done:
-            logger.debug("No counterexample found in first task. Waiting for second task...")
-            done_remaining, _ = concurrent.futures.wait(not_done)
-            for future in done_remaining:
-                result = future.result()
-                if result:
-                    logger.info("Found counterexample in second task.")
+    
+    result = None
+    timing_info = {}
+    
+    if execution_mode == "parallel":
+        logger.info("Starting parallel constraint checks...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            logger.debug("Submitting boundary and derivative constraint checks")
+            futures = [
+                executor.submit(_check_constraint, boundary_constraints, 1e-3),
+                executor.submit(_check_constraint, derivative_constraints, 1e-3)
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                res = future.result()
+                if res:
+                    result = res
+                    logger.info("Found counterexample; cancelling remaining tasks.")
+                    for f in futures:
+                        if f is not future:
+                            f.cancel()
                     break
-
-    logger.info("Parallel constraint checks completed.")
+        logger.info("Parallel constraint checks completed.")
+    elif execution_mode == "sequential":
+        logger.info("Starting sequential constraint checks with timing...")
+        start_boundary = time.monotonic()
+        boundary_result = _check_constraint(boundary_constraints, 1e-3)
+        boundary_time = time.monotonic() - start_boundary
+        timing_info["boundary_time"] = boundary_time
+        logger.info(f"Boundary check completed in {boundary_time:.4f} seconds.")
+        if boundary_result:
+            result = boundary_result
+        else:
+            start_derivative = time.monotonic()
+            derivative_result = _check_constraint(derivative_constraints, 1e-3)
+            derivative_time = time.monotonic() - start_derivative
+            timing_info["derivative_time"] = derivative_time
+            logger.info(f"Derivative check completed in {derivative_time:.4f} seconds.")
+            result = derivative_result
+    else:
+        logger.error(f"Unknown execution_mode: {execution_mode}.")
+    
     if not result:
-        logger.info("No counterexamples found in either task.")
-
-    # Save results
+        logger.info("No counterexamples found in checks.")
+    
     result_data = {
         "epsilon": epsilon,
-        "set": f"{reachMode}_{setType}", 
-        "result": str(result) if result else "HJB Equation Satisfied"
+        "set": f"{reachMode}_{setType}",
+        "result": str(result) if result else "HJB Equation Satisfied",
+        "timing": timing_info
     }
-
     result_file = f"{save_directory}/dreal_result.json"
     with open(result_file, "w") as f:
         json.dump(result_data, f, indent=4)
-
     logger.debug(f"Saved result to {result_file}")
     return result_data
 
