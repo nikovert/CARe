@@ -121,7 +121,7 @@ class CEGISLoop:
                        iteration_count + 1, self.current_epsilon)
             
             # Extract model state and config, keeping tensors on CPU for verification
-            with torch.no_grad():
+            with torch.inference_mode():
                 model_state = {k: v.cpu() for k, v in self.example.model.state_dict().items()}
             
             # Get verification result and timing info
@@ -173,7 +173,7 @@ class CEGISLoop:
                 train(
                     model=self.example.model,
                     dataset=self.dataset,
-                    epochs=self.args.num_epochs,
+                    epochs=self.args.num_epochs // 2,
                     lr=self.args.lr * 0.1,  # Lower learning rate to maintain pruned weights
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
@@ -203,17 +203,12 @@ class CEGISLoop:
             return None
             
         logger.info("Counterexample found. Will retrain model.")
-        # Extract counterexample points from the result string
-        counterexample_points = []
-        if "result" in result:
-            lines = result["result"].split('\n')
-            for line in lines:
-                if line.startswith('x_'):
-                    interval_str = line.split(':')[1].strip()[1:-1]
-                    lower, upper = map(float, interval_str.split(','))
-                    point = (lower + upper) / 2
-                    counterexample_points.append(point)
-        
+        # Refactored counterexample extraction using list comprehension
+        lines = result.get("result", "").splitlines()
+        counterexample_points = [
+            (lambda lower, upper: (lower + upper) / 2)(*map(float, line.split(':')[1].strip()[1:-1].split(',')))
+            for line in lines if line.startswith('x_')
+        ]
         if not counterexample_points:
             logger.warning("No counterexample points found in dReal result")
             return None

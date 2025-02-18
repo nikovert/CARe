@@ -18,6 +18,8 @@ class DoubleIntegratorLoss(HJILossFunction):
         # Move input bounds to the dataset's device
         self.input_min = input_bounds['min'].to(device)
         self.input_max = input_bounds['max'].to(device)
+        # Cache symmetric bounds flag
+        self.symmetric_bounds = torch.allclose(self.input_max, -self.input_min)
 
     def compute_hamiltonian(self, x, p):
         """Compute the Hamiltonian for the Double Integrator system."""
@@ -25,39 +27,33 @@ class DoubleIntegratorLoss(HJILossFunction):
         
         if using_torch:
             p1, p2 = p[..., 0], p[..., 1]
-            x1, x2 = x[..., 0], x[..., 1]
+            x2 = x[..., 1]
         else:
             p1, p2 = p[0], p[1]
-            x1, x2 = x[0], x[1]
+            x2 = x[1]
             
         ham = p1 * x2
 
-        # Check if control bounds are symmetric
-        if torch.allclose(self.input_max, -self.input_min):
-            input_magnitude = self.input_max  # or abs(self.input_min)
-            sign = 1 if self.reachAim == 'reach' else -1
-            if using_torch:
-                # Use torch.abs(p2) instead of multiplication for efficiency
+        if using_torch:
+            if self.symmetric_bounds:
+                input_magnitude = self.input_max  # symmetric: input_max equals abs(input_min)
+                sign = 1 if self.reachAim == 'reach' else -1
                 ham += sign * input_magnitude * torch.abs(p2)
             else:
-                # Use dreal.Max to compute absolute value: |p2| = Max(p2, -p2)
-                abs_p2 = dreal.Max(p2, -p2)
-                ham += sign * float(input_magnitude.item()) * abs_p2
-        else:
-            # Update asymmetric bounds branch with arithmetic formulation
-            if using_torch:
                 if self.reachAim == 'avoid':
                     ham += torch.where(p2 >= 0, self.input_min * p2, self.input_max * p2)
                 else:  # reach
                     ham += torch.where(p2 >= 0, self.input_max * p2, self.input_min * p2)
+        else:
+            if self.symmetric_bounds:
+                input_magnitude = self.input_max
+                sign = 1 if self.reachAim == 'reach' else -1
+                abs_p2 = dreal.Max(p2, -p2)
+                ham += sign * float(input_magnitude.item()) * abs_p2
             else:
-                # Replace if_then_else with arithmetic operations:
                 a = float(self.input_max.item())
                 b = float(self.input_min.item())
                 abs_p2 = dreal.Max(p2, -p2)
-                # For reach: use a when p2>=0, and b when p2<0, expressed as:
-                #   (a+b)/2 * p2 + (a-b)/2 * |p2|
-                # For avoid: flip the sign on the absolute value term
                 if self.reachAim == 'reach':
                     ham += ((a + b)/2 * p2 + (a - b)/2 * abs_p2)
                 else:  # avoid

@@ -1,16 +1,14 @@
 import torch
 import torch.nn.functional as F
-from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 import time
 import numpy as np
 from pathlib import Path
 import shutil
 import logging
-from typing import Callable, Optional, Dict
+from typing import Callable, Optional
 from .curriculum import Curriculum
 from ..common.dataset import ReachabilityDataset
-import gc
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +69,7 @@ def train(model: torch.nn.Module,
     
     # Enable automatic mixed precision for CUDA devices
     use_amp = device.type == 'cuda'
-    scaler = torch.amp.GradScaler() if use_amp else None  # Updated GradScaler import
+    scaler = torch.amp.GradScaler() if use_amp else None  # Only initialize once
     
     # Enable CUDA optimizations
     if device.type == 'cuda':
@@ -79,6 +77,8 @@ def train(model: torch.nn.Module,
 
     # Ensure model and data are on the correct device
     model = model.to(device)
+    # Precompute zeros for L1 regularization to avoid repeated allocations
+    l1_zeros = [torch.zeros_like(param, device=device) for param in model.parameters()]
     
     # Configure optimizer with device-specific settings
     optim = torch.optim.Adam(
@@ -96,9 +96,6 @@ def train(model: torch.nn.Module,
         time_min=time_min,
         time_max=time_max
     )
-
-    # Initialize gradient scaler for AMP
-    scaler = torch.amp.GradScaler() if use_amp and device.type == 'cuda' else None  # Updated GradScaler import
 
     # Load the checkpoint if required
     if start_epoch > 0:
@@ -151,10 +148,6 @@ def train(model: torch.nn.Module,
                 if validation_fn is not None:
                     validation_fn(model, checkpoints_dir, epoch, tmax=tmax)
 
-                gc.collect()
-                if device.type == 'cuda':
-                    torch.cuda.empty_cache()
-
             # Get a fresh batch of data
             model_input, gt = dataset.get_batch()
             
@@ -175,11 +168,11 @@ def train(model: torch.nn.Module,
                 train_loss = sum(loss.mean() * loss_weights.get(name, 1.0)
                                 for name, loss in losses.items())
                 
-                # Calculate total loss and add L1 regularization using PyTorch's built-in function
+                # Calculate total loss and add L1 regularization using precomputed zeros
                 if l1_lambda > 0:
                     l1_loss = torch.tensor(0., device=device)
-                    for param in model.parameters():
-                        l1_loss += F.l1_loss(param, torch.zeros_like(param), reduction='sum')
+                    for param, zero in zip(model.parameters(), l1_zeros):
+                        l1_loss += F.l1_loss(param, zero, reduction='sum')
                     train_loss += l1_lambda * l1_loss
 
             if scaler is not None:

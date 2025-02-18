@@ -8,7 +8,6 @@ from certreach.verification.dreal_utils import (
     process_dreal_result,
     verify_with_dreal
 )
-from dreal import And, Not, CheckSatisfiability
 
 logger = logging.getLogger(__name__)
 

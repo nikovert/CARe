@@ -29,7 +29,7 @@ def parse_args():
                   help='Number of points to sample per batch')
     p.add_argument('--lr', type=float, default=2e-5,
                   help='Learning rate for optimizer')
-    p.add_argument('--num_epochs', type=int, default=int(0.2*10e5),
+    p.add_argument('--num_epochs', type=int, default=int(10e4),
                   help='Number of training epochs')
     p.add_argument('--epochs_til_ckpt', type=int, default=int(5000),
                   help='Number of epochs between model checkpoints')
@@ -69,13 +69,13 @@ def parse_args():
                   help='Whether to compute reachable set or tube')
 
     # Training Process Settings
-    p.add_argument('--pretrain_percentage', type=float, default=0.001,
+    p.add_argument('--pretrain_percentage', type=float, default=0.01,
                   help='Percentage of total steps to use for pretraining (0.0 to 1.0)')
     p.add_argument('--seed', type=int, default=0,
                   help='Random seed for reproducibility')
 
     # Verification Settings
-    p.add_argument('--epsilon', type=float, default=0.01,
+    p.add_argument('--epsilon', type=float, default=0.1,
                   help='Initial epsilon for verification')
     p.add_argument('--min_epsilon', type=float, default=0.01,
                   help='Minimum epsilon to achieve before terminating CEGIS')

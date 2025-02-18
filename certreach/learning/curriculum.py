@@ -37,7 +37,7 @@ class Curriculum:
         if self.current_step < self.pretrain_percentage*self.total_steps:
             return 0.0
         else:
-            progress = 2*(self.current_step/self.total_steps - self.pretrain_percentage)/(1 - self.pretrain_percentage)
+            progress = 1.05*(self.current_step/self.total_steps - self.pretrain_percentage)/(1 - self.pretrain_percentage)
             return min(progress, 1.0)
 
     def get_time_range(self) -> tuple[float, float]:
