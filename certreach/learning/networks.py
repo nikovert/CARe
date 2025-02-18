@@ -254,8 +254,12 @@ class SingleBVPNet(torch.nn.Module):
                 
             self.config = config
             
-            # Use shared activation configs
-            nl = ACTIVATION_CONFIGS[config.activation_type][0](config) if callable(ACTIVATION_CONFIGS[config.activation_type][0]) else ACTIVATION_CONFIGS[config.activation_type][0]
+            # Updated activation setup based on activation_type
+            activation_entry = ACTIVATION_CONFIGS[config.activation_type][0]
+            if config.activation_type == 'sine':
+                nl = activation_entry(config)
+            else:
+                nl = activation_entry  # use the predefined module instance (e.g., ReLU)
             init_fn, first_layer_init = ACTIVATION_CONFIGS[config.activation_type][1:]
             self.weight_init = init_fn
             
