@@ -85,12 +85,18 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
                 
         current_output = sympy.Matrix.vstack(*poly_terms)
     
-    # Get weight and bias from state dict
+    # Get weight and bias from state dict and apply pruning masks if they exist
     weight_key = f'net.{layer_number-1}.0.weight'
     bias_key = f'net.{layer_number-1}.0.bias'
     
     if weight_key in state_dict and bias_key in state_dict:
-        weight = sympy.Matrix(state_dict[weight_key].detach().cpu().numpy())
+        weight = state_dict[weight_key].detach().cpu().numpy()
+        # Look for mask with new naming format
+        mask_key = f'mask_net_{layer_number-1}_0_weight'
+        if mask_key in state_dict:
+            weight *= state_dict[mask_key].detach().cpu().numpy()
+        
+        weight = sympy.Matrix(weight)
         bias = sympy.Matrix(state_dict[bias_key].detach().cpu().numpy())
         
         # Add dimension check

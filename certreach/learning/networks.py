@@ -241,6 +241,7 @@ class SingleBVPNet(torch.nn.Module):
 
     def __init__(self, config: Optional[Union[NetworkConfig, Dict[str, Any]]] = None, **kwargs) -> None:
         super().__init__()
+        self._is_pruned = False
         
         try:
             # Convert dict to NetworkConfig if needed
@@ -450,10 +451,95 @@ class SingleBVPNet(torch.nn.Module):
         if eval_mode:
             self.eval()
 
+    def _get_valid_buffer_name(self, param_name: str) -> str:
+        """Convert parameter name to valid buffer name by replacing dots with underscores."""
+        return f"mask_{param_name.replace('.', '_')}"
+
+    def prune_weights(self, threshold: float) -> Dict[str, float]:
+        """
+        Prune weights smaller than the threshold (in absolute value).
+        Creates and applies masks as registered buffers with valid names.
+        
+        Args:
+            threshold (float): Absolute threshold value for pruning
+            
+        Returns:
+            Dict containing pruning statistics
+        """
+        total_params = 0
+        pruned_params = 0
+        
+        # First remove any existing mask buffers
+        for name, _ in list(self.named_buffers()):
+            if name.startswith('mask_'):
+                delattr(self, name)
+        
+        for name, param in self.named_parameters():
+            if 'weight' in name:  # Only prune weights, not biases
+                mask = (torch.abs(param.data) >= threshold).float()
+                # Register the mask as a buffer with valid name
+                buffer_name = self._get_valid_buffer_name(name)
+                self.register_buffer(buffer_name, mask)
+                param.data *= mask  # Apply mask
+                
+                total_params += param.numel()
+                pruned_params += (mask == 0).sum().item()
+        
+        self._is_pruned = True
+        
+        stats = {
+            'total_params': total_params,
+            'pruned_params': pruned_params,
+            'pruning_ratio': pruned_params / total_params if total_params > 0 else 0,
+            'threshold': threshold
+        }
+        
+        return stats
+
+    def remove_pruning(self):
+        """Remove all pruning masks and allow weights to be updated freely again."""
+        for name, _ in list(self.named_buffers()):
+            if name.startswith('mask_'):
+                delattr(self, name)
+        self._is_pruned = False
+
+    def get_pruning_statistics(self) -> Dict[str, Union[int, float]]:
+        """Get current pruning statistics."""
+        if not self._is_pruned:
+            return {'pruned': False}
+        
+        total_params = 0
+        pruned_params = 0
+        
+        for name, param in self.named_parameters():
+            if 'weight' in name:
+                buffer_name = self._get_valid_buffer_name(name)
+                mask = getattr(self, buffer_name, None)
+                if mask is not None:
+                    total_params += param.numel()
+                    pruned_params += (mask == 0).sum().item()
+        
+        return {
+            'pruned': True,
+            'total_params': total_params,
+            'pruned_params': pruned_params,
+            'pruning_ratio': pruned_params / total_params if total_params > 0 else 0
+        }
+
     def forward(self, model_input, params=None):
         if params is None:
             params = OrderedDict(self.named_parameters())
-        # Ensures input is on same device as model
+            
+        # If pruned, ensure weights remain pruned
+        if self._is_pruned:
+            with torch.no_grad():
+                for name, param in self.named_parameters():
+                    if 'weight' in name:
+                        buffer_name = self._get_valid_buffer_name(name)
+                        mask = getattr(self, buffer_name, None)
+                        if mask is not None:
+                            param.data *= mask
+        
         coords_org = model_input['coords'].to(self.device, non_blocking=True)
         coords = coords_org
         output = self.net(coords)
