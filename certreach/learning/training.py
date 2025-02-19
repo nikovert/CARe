@@ -114,13 +114,6 @@ def train(model: torch.nn.Module,
         except Exception as e:
             logger.error(f"Error loading checkpoint: {e}")
 
-    else:
-        # Start training from scratch
-        if Path(model_dir).exists():
-            logger.info(f"The model directory {model_dir} exists. Deleting and recreating...")
-            shutil.rmtree(model_dir)
-        Path(model_dir).mkdir(parents=True, exist_ok=True)
-
     # Make sure all path operations use Path consistently
     model_dir = Path(model_dir)
     checkpoints_dir = model_dir / 'checkpoints'

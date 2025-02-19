@@ -59,5 +59,4 @@ def setup_experiment_folder(exp_folder_path, create=False):
     """Set up experiment folder structure."""
     if create:
         os.makedirs(exp_folder_path, exist_ok=True)
-        os.makedirs(os.path.join(exp_folder_path, 'checkpoints'), exist_ok=True)
-    return os.path.join(exp_folder_path, 'checkpoints')
+    return exp_folder_path  # Return just the main folder path now

@@ -18,7 +18,7 @@ def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[d
     return result
 
 def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5,
-                      reachMode='forward', setType='set', save_directory="./", execution_mode="sequential"):
+                      reachMode='forward', setType='set', save_directory="./", execution_mode="parallel"):
     """
     Verifies if the HJB equation holds using dReal for a double integrator system.
     
@@ -75,14 +75,15 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     
     result = None
     timing_info = {}
+    delta = epsilon / 10
     
     if execution_mode == "parallel":
         logger.info("Starting parallel constraint checks...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             logger.debug("Submitting boundary and derivative constraint checks")
             futures = [
-                executor.submit(_check_constraint, boundary_constraints, 1e-3),
-                executor.submit(_check_constraint, derivative_constraints, 1e-3)
+                executor.submit(_check_constraint, boundary_constraints, delta),
+                executor.submit(_check_constraint, derivative_constraints, delta)
             ]
             for future in concurrent.futures.as_completed(futures):
                 res = future.result()
@@ -97,7 +98,7 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     elif execution_mode == "sequential":
         logger.info("Starting sequential constraint checks with timing...")
         start_boundary = time.monotonic()
-        boundary_result = _check_constraint(boundary_constraints, 1e-3)
+        boundary_result = _check_constraint(boundary_constraints, delta)
         boundary_time = time.monotonic() - start_boundary
         timing_info["boundary_time"] = boundary_time
         logger.info(f"Boundary check completed in {boundary_time:.4f} seconds.")
@@ -105,7 +106,7 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
             result = boundary_result
         else:
             start_derivative = time.monotonic()
-            derivative_result = _check_constraint(derivative_constraints, 1e-3)
+            derivative_result = _check_constraint(derivative_constraints, delta)
             derivative_time = time.monotonic() - start_derivative
             timing_info["derivative_time"] = derivative_time
             logger.info(f"Derivative check completed in {derivative_time:.4f} seconds.")
