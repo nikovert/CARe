@@ -1,4 +1,5 @@
 import os
+import re  # new import
 import json
 import time
 import logging
@@ -45,7 +46,7 @@ class CEGISLoop:
         self.current_symbolic_model = None
         self.min_epsilon = args.min_epsilon
         self.pruning_threshold = getattr(args, 'pruning_threshold', 0.01)  # Default threshold if not specified
-        self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
+        self.prune_after_initial = getattr(args, 'prune_after_initial', False)  # Whether to prune after initial training
                 
         # Initialize dataset if not already existing
         self.dataset = ReachabilityDataset(
@@ -65,14 +66,18 @@ class CEGISLoop:
         """Run the CEGIS loop with proper CUDA memory management."""
         iteration_count = 0
         start_time = time.time()
+        base_dir = self.example.root_path
+        
         model_config = self.example.model.get_config()
-        system_specifics = {
-            'name': self.example.Name,
-            'root_path': self.example.root_path
-        }
 
         # Initial training if starting from scratch
         if train_first:
+        
+            # Create initial training directory
+            initial_dir = os.path.join(base_dir, "initial_training")
+            os.makedirs(initial_dir, exist_ok=True)
+            self.example.root_path = initial_dir
+            
             logger.info("Starting initial training before verification loop")
             train_start = time.time()
             train(
@@ -104,7 +109,7 @@ class CEGISLoop:
                     model=self.example.model,
                     dataset=self.dataset,
                     epochs=self.args.num_epochs // 2,  # Shorter training period for fine-tuning
-                    lr=self.args.lr * 0.1,  # Lower learning rate for fine-tuning
+                    lr=self.args.lr * 0.5,  # Lower learning rate for fine-tuning
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
@@ -120,6 +125,12 @@ class CEGISLoop:
             logger.info("Starting iteration %d with epsilon: %.4f", 
                        iteration_count + 1, self.current_epsilon)
             
+            # Update system_specifics with current root_path before verification
+            system_specifics = {
+                'name': self.example.Name,
+                'root_path': self.example.root_path
+            }
+            
             # Extract model state and config, keeping tensors on CPU for verification
             with torch.no_grad():
                 model_state = {k: v.cpu() for k, v in self.example.model.state_dict().items()}
@@ -128,7 +139,7 @@ class CEGISLoop:
             verification_result, timing_info, symbolic_model = verify_system(
                 model_state=model_state,
                 model_config=model_config,
-                system_specifics=system_specifics,
+                system_specifics=system_specifics,  # Use updated system_specifics
                 compute_hamiltonian=self.example.hamiltonian_fn,
                 compute_boundary=self.example.boundary_fn,
                 epsilon=self.current_epsilon,
@@ -145,9 +156,7 @@ class CEGISLoop:
                 verification_time=timing_info['verification_time']
             ))
             
-            counterexample = self._process_verification_results()
-            
-            if counterexample is None:
+            if verification_result["result"] == "HJB Equation Satisfied":
                 # Verification succeeded, try smaller epsilon
                 with torch.no_grad():  # No gradients needed for model state saving
                     if self.current_epsilon < self.best_epsilon:
@@ -162,23 +171,37 @@ class CEGISLoop:
                     if self.current_epsilon <= self.min_epsilon:
                         logger.info(f"Reached minimum epsilon threshold: {self.min_epsilon}")
                         break
-                    self.current_epsilon *= 0.5
+                    self.current_epsilon *= 0.75  # Reduce epsilon by 25%
                     # Ensure we don't go below minimum epsilon
                     self.current_epsilon = max(self.current_epsilon, self.min_epsilon)
                     self.args.epsilon = self.current_epsilon
             else:
                 # Train on counterexample
+                # Convert dictionary counterexample to tensor format
+                ce_list = []
+                for key in sorted(verification_result["counterexample"].keys()):
+                    interval = verification_result["counterexample"][key]
+                    # Take midpoint of interval as the counterexample point
+                    ce_list.append((interval[0] + interval[1]) / 2)
+                counterexample = torch.tensor(ce_list, device=self.device)
+                
+                # Create a subdirectory for this counterexample iteration inside the checkpoint directory
+                counter_dir = os.path.join(base_dir, f"iteration_{iteration_count+1}")
+                os.makedirs(counter_dir, exist_ok=True)
+                self.example.root_path = counter_dir
+                logger.info(f"Created new iteration directory: {counter_dir}")
+
                 train_start = time.time()
                 self.dataset.add_counterexample(counterexample)
                 train(
                     model=self.example.model,
                     dataset=self.dataset,
-                    epochs=self.args.num_epochs,
-                    lr=self.args.lr * 0.1,  # Lower learning rate to maintain pruned weights
+                    epochs=self.args.num_epochs // 5,
+                    lr=self.args.lr * 0.1,  # Lower learning rate for counterexample training
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
-                    pretrain_percentage= 0.0 if iteration_count>1 else self.args.pretrain_percentage,  # Use pretrain only first time
+                    pretrain_percentage= 0.0,
                     time_min=self.args.tMin,
                     time_max=self.args.tMax,
                     validation_fn=self.example.validate,
@@ -192,34 +215,6 @@ class CEGISLoop:
         total_time = time.time() - start_time
         return self._finalize_results(total_time)
 
-    def _process_verification_results(self) -> Optional[torch.Tensor]:
-        """Process verification results and return counterexample if found."""
-        dreal_result_path = f"{self.example.root_path}/dreal_result.json"
-        with open(dreal_result_path, 'r') as f:
-            result = json.load(f)
-            
-        if "HJB Equation Satisfied" in result["result"]:
-            logger.info("HJB Equation satisfied. Reducing epsilon.")
-            return None
-            
-        logger.info("Counterexample found. Will retrain model.")
-        # Extract counterexample points from the result string
-        counterexample_points = []
-        if "result" in result:
-            lines = result["result"].split('\n')
-            for line in lines:
-                if line.startswith('x_'):
-                    interval_str = line.split(':')[1].strip()[1:-1]
-                    lower, upper = map(float, interval_str.split(','))
-                    point = (lower + upper) / 2
-                    counterexample_points.append(point)
-        
-        if not counterexample_points:
-            logger.warning("No counterexample points found in dReal result")
-            return None
-        
-        return torch.tensor(counterexample_points, device=self.device)
-    
     def _finalize_results(self, total_time: float) -> CEGISResult:
         """Restore best model and generate final visualizations."""
         if not self.best_model_state:

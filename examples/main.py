@@ -37,7 +37,7 @@ def parse_args():
     # Model Settings
     p.add_argument('--model_type', type=str, default='relu', choices=['sine', 'relu'],
                   help='Activation function for the neural network')
-    p.add_argument('--model_mode', type=str, default='mlp', choices=['mlp', 'rbf', 'pinn'],
+    p.add_argument('--model_mode', type=str, default='mlp', choices=['mlp'],
                   help='Type of neural network architecture')
     p.add_argument('--in_features', type=int, default=3,
                   help='Number of input features for the network')
@@ -45,7 +45,7 @@ def parse_args():
                   help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
-    p.add_argument('--num_nl', type=int, default=32,
+    p.add_argument('--num_nl', type=int, default=48,
                   help='Number of neurons per layer')
     p.add_argument('--use_polynomial', action='store_true', default=True,
                   help='Whether to use polynomial features')
@@ -69,19 +69,19 @@ def parse_args():
                   help='Whether to compute reachable set or tube')
 
     # Training Process Settings
-    p.add_argument('--pretrain_percentage', type=float, default=0.001,
+    p.add_argument('--pretrain_percentage', type=float, default=0.05,
                   help='Percentage of total steps to use for pretraining (0.0 to 1.0)')
     p.add_argument('--seed', type=int, default=0,
                   help='Random seed for reproducibility')
 
     # Verification Settings
-    p.add_argument('--epsilon', type=float, default=0.01,
+    p.add_argument('--epsilon', type=float, default=0.75,
                   help='Initial epsilon for verification')
     p.add_argument('--min_epsilon', type=float, default=0.01,
                   help='Minimum epsilon to achieve before terminating CEGIS')
     p.add_argument('--epsilon_radius', type=float, default=0.1,
                   help='Radius around counterexample points for sampling')
-    p.add_argument('--max_iterations', type=int, default=5,
+    p.add_argument('--max_iterations', type=int, default=50,
                   help='Maximum number of CEGIS iterations')
     
     # Add device argument
@@ -91,8 +91,6 @@ def parse_args():
     # Training Mode Settings
     p.add_argument('--quick_mode', action='store_true', default=False,
                   help='Enable quick testing mode with reduced epochs and iterations')
-    p.add_argument('--full_mode', action='store_true', default=False,
-                  help='Enable full training mode with complete epochs and iterations')
     
     # Add solution checking argument
     p.add_argument('--check_solution', action='store_true', default=True,
@@ -110,13 +108,7 @@ def parse_args():
     if args.quick_mode:
         args.num_epochs = 10
         args.max_iterations = 2
-        args.epsilon = 0.35
         args.batch_size = 16
-    elif args.full_mode:
-        args.num_epochs = 5000
-        args.max_iterations = 10
-        args.epsilon = 0.35
-        args.batch_size = 128
 
     # Set pin_memory based on device type if not explicitly set
     args.pin_memory = args.device == 'cpu'
