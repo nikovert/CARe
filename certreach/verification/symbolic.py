@@ -146,7 +146,7 @@ def parallel_substitution_task(args):
     # Using xreplace here for fast, dictionary-based substitution
     return expr.xreplace(substitution_map)
 
-def combine_all_layers_parallelized(state_dict, config, simplify=False):
+def combine_all_layers_parallelized(state_dict, config, simplify=True):
     """
     Combine all layers using state dict directly.
 

@@ -1,14 +1,14 @@
 import json
-from dreal import Variable
-import dreal
 import sympy
 import logging
 import time 
-from dreal import And, Not, CheckSatisfiability
+import dreal
+from dreal import Variable, And, Or, Not, CheckSatisfiability
 import concurrent.futures
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+use_if_then_else = True
 
 def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[dreal.Box]:
     """Helper function to check a single constraint."""
@@ -18,7 +18,7 @@ def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[d
     return result
 
 def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5,
-                      reachMode='forward', setType='set', save_directory="./", execution_mode="parallel"):
+                      reachMode='forward', setType='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
     """
     Verifies if the HJB equation holds using dReal for a double integrator system.
     
@@ -58,7 +58,7 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     # Define boundary constraints (assuming T=1)
     boundary_value = compute_boundary(state_vars)
     boundary_condition = abs(d_real_value_fn - boundary_value) > epsilon
-
+                              
     # Define State constraints
     state_constraints = And(
         t >= 0, t <= 1,
@@ -70,8 +70,13 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
         *[And(var >= -1, var <= 1) for var in state_vars]
     )
 
-    boundary_constraints = And(boundary_condition, initial_state_constraints)
-    derivative_constraints = And(derivative_condition, state_constraints)
+    # Combine constraints
+    if additional_constraints:
+        boundary_constraints = And(boundary_condition, initial_state_constraints, *additional_constraints)
+        derivative_constraints = And(derivative_condition, state_constraints, *additional_constraints)
+    else:
+        boundary_constraints = And(boundary_condition, initial_state_constraints)
+        derivative_constraints = And(derivative_condition, state_constraints)
     
     result = None
     timing_info = {}
@@ -185,14 +190,27 @@ def sympy_to_dreal_converter(syms: dict, exp: sympy.Expr, to_number=lambda x: fl
     # Handle addition: Sum all terms
     elif isinstance(exp, sympy.Add):
         terms = [sympy_to_dreal_converter(syms, arg, to_number, expand_pow) for arg in exp.args]
+        if any(isinstance(term, dict) for term in terms):
+            # Handle Heaviside formulas separately
+            result = terms[0]
+            for term in terms[1:]:
+                result["expression"] +=term["expression"]
+                result["variable_conditions"].append(*term["variable_conditions"])
+            return result
+            
+        # Regular addition for other terms
         return sum(terms)
 
     # Handle multiplication: Multiply all terms
     elif isinstance(exp, sympy.Mul):
-        terms = [sympy_to_dreal_converter(syms, arg, to_number, expand_pow) for arg in exp.args]
-        result = terms[0]
-        for term in terms[1:]:
-            result *= term
+        for idx, arg in enumerate(exp.args):
+            if idx == 0: 
+                result = sympy_to_dreal_converter(syms, arg, to_number, expand_pow)
+            elif isinstance(arg, sympy.Heaviside) and not use_if_then_else:
+                # Handle multiplication with Heaviside expressions separately
+                result = heaviside_sympy_to_dreal_converter(syms, result, exp.args[idx], to_number, expand_pow)
+            else:
+                result *= sympy_to_dreal_converter(syms, arg, to_number, expand_pow)
         return result
 
     # Handle exponentiation (powers)
@@ -231,20 +249,48 @@ def sympy_to_dreal_converter(syms: dict, exp: sympy.Expr, to_number=lambda x: fl
                 arg = sympy_to_dreal_converter(syms, exp.args[0], to_number, expand_pow)
                 return dreal_func(arg)
 
-        # Handle Heaviside expressions using dreal.if_then_else
+        # Handle Heaviside expressions using AND/OR gates with a result variable
         if isinstance(exp, sympy.Heaviside):
             arg = sympy_to_dreal_converter(syms, exp.args[0], to_number, expand_pow)
-            return dreal.if_then_else(arg < 0, 0, 1)
-        
+            # Use the result variable in the logical operations
+            if use_if_then_else:
+                return dreal.if_then_else(arg < 0, 0, 1)
+            else:
+                result_var = Variable(f"heaviside_result_{id(exp)}")  # Create unique variable name
+                return Or(And(arg < 0, result_var == 0), 
+                     And(Not(arg < 0), result_var == 1))
+
     # Handle Max/Min expressions
     elif isinstance(exp, sympy.Max) or isinstance(exp, sympy.Min):
         arg1 = sympy_to_dreal_converter(syms, exp.args[0], to_number, expand_pow)
         arg2 = sympy_to_dreal_converter(syms, exp.args[1], to_number, expand_pow)
-        return dreal.Max(arg1, arg2) if isinstance(exp, sympy.Max) else dreal.Min(arg1, arg2)
+        if isinstance(exp, sympy.Max):
+            #return Or(And(arg1 > arg2, arg1), And(arg1 <= arg2, arg2))
+            return dreal.Max(arg1, arg2)
+        else:  # Min(a,b) = (a < b AND a) OR (a >= b AND b)
+            #return Or(And(arg1 < arg2, arg1), And(arg1 >= arg2, arg2))
+            return dreal.Min(arg1, arg2)
 
     # Raise an error if the term is unsupported
     logger.error(f"Unsupported term: {exp} (type: {type(exp)})")
     raise ValueError(f"[Error] Unsupported term: {exp} (type: {type(exp)})")
+    
+def heaviside_sympy_to_dreal_converter(syms: dict, exp1: sympy.Expr, exp2: sympy.Expr, to_number=lambda x: float(x), expand_pow=True):
+    if isinstance(exp2, sympy.Heaviside):
+        exp = exp2
+        value = exp1
+    else:
+        exp = exp1
+        value = exp2
+    
+    arg = sympy_to_dreal_converter(syms, exp.args[0], to_number, expand_pow)
+    result_var = Variable(f"heaviside_result_{id(exp)}")  # Create unique variable name
+    
+    result = {"expression": result_var,
+              "variable_conditions": [Or(And(arg < 0, result_var == 0), And(Not(arg < 0), result_var == value))]}
+    
+    # Use the result variable in the logical operations
+    return result
 
 def extract_dreal_partials(final_symbolic_expression):
     """
@@ -269,16 +315,20 @@ def extract_dreal_partials(final_symbolic_expression):
     # Convert SymPy symbols to dReal variables
     dreal_variables = convert_symbols_to_dreal(input_symbols)
 
-    # Convert symbolic partial derivatives to dReal expressions
-    dreal_partials = {
-        f"partial_{str(var)}": sympy_to_dreal_converter(dreal_variables, partial)
-        for var, partial in zip(input_symbols, partials)
-    }
+    dreal_partials = {}
+    additional_conditions = []
+    for var, partial in zip(input_symbols, partials):
+        partial_result = sympy_to_dreal_converter(dreal_variables, partial)
+        if isinstance(partial_result, dict):
+            dreal_partials[f"partial_{str(var)}"] = partial_result["expression"]
+            additional_conditions.extend(partial_result["variable_conditions"])
+        else:
+            dreal_partials[f"partial_{str(var)}"] = partial_result
 
     # Convert symbolic value function to dReal expression - fix by accessing first element
     d_real_value_fn = sympy_to_dreal_converter(dreal_variables, final_symbolic_expression[0])
 
-    return {
+    results = {
         "input_symbols": input_symbols,
         "partials": partials,
         "dreal_variables": dreal_variables,
@@ -286,8 +336,11 @@ def extract_dreal_partials(final_symbolic_expression):
         "d_real_value_fn": d_real_value_fn,
         **{f"sympy_partial_{i+1}": partial for i, partial in enumerate(partials)},
         **{f"dreal_partial_{i+1}": dreal_partials[f"partial_{str(input_symbols[i])}"] 
-           for i in range(len(input_symbols))}
+           for i in range(len(input_symbols))},
+        "additional_conditions": additional_conditions
     }
+
+    return results
 
 def process_dreal_result(json_path):
     """

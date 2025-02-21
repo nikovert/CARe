@@ -63,7 +63,8 @@ def verify_system(
             epsilon=epsilon,
             reachMode='forward',
             setType='set',
-            save_directory=system_specifics['root_path']
+            save_directory=system_specifics['root_path'],
+            additional_constraints=result["additional_conditions"] if "additional_conditions" in result else None
         )
         timing_info['verification_time'] = time.time() - t_verify_start
         

@@ -1,6 +1,4 @@
 import os
-import re  # new import
-import json
 import time
 import logging
 import torch
@@ -9,7 +7,6 @@ from dataclasses import dataclass
 from certreach.verification.verify import verify_system
 from certreach.common.dataset import ReachabilityDataset
 from certreach.learning.training import train
-from copy import deepcopy
 
 logger = logging.getLogger(__name__)
 
