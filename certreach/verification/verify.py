@@ -5,7 +5,6 @@ from typing import Dict, Any, Tuple, Optional, Callable
 from certreach.verification.symbolic import extract_symbolic_model
 from certreach.verification.dreal_utils import (
     extract_dreal_partials,
-    process_dreal_result,
     verify_with_dreal
 )
 from dreal import And, Not, CheckSatisfiability
@@ -54,7 +53,7 @@ def verify_system(
         result = extract_dreal_partials(symbolic_model)
         
         logger.info("Running dReal verification")
-        verify_with_dreal(
+        verification_result = verify_with_dreal(
             d_real_value_fn=result["d_real_value_fn"],
             dreal_partials=result["dreal_partials"],
             dreal_variables=result["dreal_variables"],
@@ -63,17 +62,17 @@ def verify_system(
             epsilon=epsilon,
             reachMode='forward',
             setType='set',
-            save_directory=system_specifics['root_path']
+            save_directory=system_specifics['root_path'],
+            additional_constraints=result["additional_conditions"] if "additional_conditions" in result else None
         )
         timing_info['verification_time'] = time.time() - t_verify_start
         
         logger.debug("Symbolic generation took: %.2fs", timing_info.get('symbolic_time', 0))
         logger.debug("Verification took: %.2fs", timing_info['verification_time'])
         
-        result = process_dreal_result(f"{system_specifics['root_path']}/dreal_result.json")
-        logger.info("Verification completed with result: %s", result.get('result', 'Unknown'))
+        logger.info("Verification completed with result: %s", verification_result.get('result', 'Unknown'))
         
-        return result, timing_info, symbolic_model
+        return verification_result, timing_info, symbolic_model
         
     except Exception as e:
         logger.error("Verification failed: %s", str(e))
