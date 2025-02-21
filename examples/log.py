@@ -1,7 +1,7 @@
 import logging
 import sys
 
-def configure_logging(log_file=None, log_level=logging.DEBUG):
+def configure_logging(log_file=None, log_level=logging.INFO):
     """Configure logging to both file and console with proper formatting."""
     # Create root logger
     root_logger = logging.getLogger()
