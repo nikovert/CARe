@@ -8,7 +8,7 @@ import concurrent.futures
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-use_if_then_else = True
+use_if_then_else = False
 
 def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[dreal.Box]:
     """Helper function to check a single constraint."""
@@ -16,6 +16,29 @@ def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[d
     result = CheckSatisfiability(constraint, precision)
     logger.debug(f"Constraint check completed. Found counterexample: {result is not None}")
     return result
+
+def parse_counterexample(result_str):
+    """
+    Parse the counterexample from the dReal result string.
+
+    Args:
+        result_str (str): The result string from the dReal output.
+
+    Returns:
+        dict: Parsed counterexample as a dictionary of variable ranges.
+    """
+    counterexample = {}
+    try:
+        for line in result_str.strip().split('\n'):
+            # Parse each variable and its range
+            variable, value_range = line.split(':')
+            lower, upper = map(float, value_range.strip('[] ').split(','))
+            if "x_" in variable:
+                counterexample[variable.strip()] = (lower, upper)
+    except Exception as e:
+        logger.error(f"Failed to parse counterexample: {e}")
+        return None
+    return counterexample
 
 def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5,
                       reachMode='forward', setType='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
@@ -121,18 +144,27 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     
     if not result:
         logger.info("No counterexamples found in checks.")
+        verification_result = {
+            "epsilon": epsilon,
+            "result": "HJB Equation Satisfied",
+            "counterexample": None,
+            "timing": timing_info
+        }
+    else:
+        verification_result = {
+            "epsilon": epsilon,
+            "result": "HJB Equation Not Satisfied",
+            "counterexample": parse_counterexample(str(result)),
+            "timing": timing_info
+        }
     
-    result_data = {
-        "epsilon": epsilon,
-        "set": f"{reachMode}_{setType}",
-        "result": str(result) if result else "HJB Equation Satisfied",
-        "timing": timing_info
-    }
+    # Optionally save result to file
     result_file = f"{save_directory}/dreal_result.json"
     with open(result_file, "w") as f:
-        json.dump(result_data, f, indent=4)
+        json.dump(verification_result, f, indent=4)
     logger.debug(f"Saved result to {result_file}")
-    return result_data
+    
+    return verification_result
 
 def convert_symbols_to_dreal(input_symbols):
     """
@@ -354,27 +386,6 @@ def process_dreal_result(json_path):
         dict: Parsed dReal result including epsilon, result details, and counterexample range if applicable.
     """
     logger = logging.getLogger(__name__)
-    def parse_counterexample(result_str):
-        """
-        Parse the counterexample from the dReal result string.
-
-        Args:
-            result_str (str): The result string from the dReal output.
-
-        Returns:
-            dict: Parsed counterexample as a dictionary of variable ranges.
-        """
-        counterexample = {}
-        try:
-            for line in result_str.strip().split('\n'):
-                # Parse each variable and its range
-                variable, value_range = line.split(':')
-                lower, upper = map(float, value_range.strip('[] ').split(','))
-                counterexample[variable.strip()] = (lower, upper)
-        except Exception as e:
-            logger.error(f"Failed to parse counterexample: {e}")
-            return None
-        return counterexample
 
     try:
         # Load the JSON result from the specified file

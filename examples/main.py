@@ -35,7 +35,7 @@ def parse_args():
                   help='Number of epochs between model checkpoints')
 
     # Model Settings
-    p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'relu'],
+    p.add_argument('--model_type', type=str, default='relu', choices=['sine', 'relu'],
                   help='Activation function for the neural network')
     p.add_argument('--model_mode', type=str, default='mlp', choices=['mlp'],
                   help='Type of neural network architecture')
@@ -45,7 +45,7 @@ def parse_args():
                   help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
-    p.add_argument('--num_nl', type=int, default=32,
+    p.add_argument('--num_nl', type=int, default=16,
                   help='Number of neurons per layer')
     p.add_argument('--use_polynomial', action='store_true', default=True,
                   help='Whether to use polynomial features')
