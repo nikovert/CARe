@@ -14,7 +14,7 @@ class NetworkConfig:
     out_features: int = 1
     hidden_features: Union[int, tune.grid_search, tune.choice] = 32
     num_hidden_layers: Union[int, tune.grid_search, tune.choice] = 3
-    activation_type: Union[Literal['sine', 'relu', 'sigmoid', 'tanh', 'selu', 'softplus', 'elu'], 
+    activation_type: Union[Literal['sine', 'relu', 'sigmoid', 'tanh', 'selu', 'softplus', 'elu', 'gelu'], 
                          tune.grid_search, tune.choice] = 'sine'
     mode: str = 'mlp'
     use_polynomial: Union[bool, tune.grid_search, tune.choice] = False
@@ -49,7 +49,7 @@ class NetworkConfig:
         return {
             "hidden_features": tune.choice([16, 32, 64, 128]),
             "num_hidden_layers": tune.choice([2, 3, 4, 5]),
-            "activation_type": tune.choice(['sine', 'relu', 'tanh']),
+            "activation_type": tune.choice(['sine', 'relu', 'gelu']),
             "use_polynomial": tune.choice([True, False]),
             "poly_degree": tune.choice([2, 3]),
             "initialization_scale": tune.loguniform(0.1, 10.0),
@@ -227,6 +227,11 @@ ACTIVATION_CONFIGS: Dict[str, Tuple[torch.nn.Module, callable, Optional[callable
     'softplus': (
         torch.nn.Softplus(),
         lambda w: init.kaiming_normal_(w, nonlinearity='relu'),
+        None
+    ),
+    'gelu': (
+        torch.nn.GELU(),
+        lambda w: init.normal_(w, std=1/math.sqrt(w.size(1))),  # Initialize using He initialization
         None
     )
 }

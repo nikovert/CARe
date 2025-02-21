@@ -114,7 +114,9 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
         logger.error(f"Unknown execution_mode: {execution_mode}.")
     
     if not result:
-        logger.info("No counterexamples found in checks.")
+        success = True  # HJB Equation is satisfied
+    else:
+        success = False  # HJB Equation is not satisfied
     
     result_data = {
         "epsilon": epsilon,
@@ -126,7 +128,10 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     with open(result_file, "w") as f:
         json.dump(result_data, f, indent=4)
     logger.debug(f"Saved result to {result_file}")
-    return result_data
+
+    counterexample = parse_counterexample(str(result)) if not success else None
+
+    return success, counterexample
 
 def convert_symbols_to_dreal(input_symbols):
     """
@@ -288,19 +293,7 @@ def extract_dreal_partials(final_symbolic_expression):
            for i in range(len(input_symbols))}
     }
 
-def process_dreal_result(json_path):
-    """
-    Process the dReal result from a JSON file to determine whether the HJB Equation is satisfied,
-    display the epsilon value, and optionally return the counterexample if verification is not satisfied.
-
-    Args:
-        json_path (str): Path to the JSON file containing dReal results.
-
-    Returns:
-        dict: Parsed dReal result including epsilon, result details, and counterexample range if applicable.
-    """
-    logger = logging.getLogger(__name__)
-    def parse_counterexample(result_str):
+def parse_counterexample(result_str):
         """
         Parse the counterexample from the dReal result string.
 
@@ -322,6 +315,19 @@ def process_dreal_result(json_path):
             return None
         return counterexample
 
+def process_dreal_result(json_path):
+    """
+    Process the dReal result from a JSON file to determine whether the HJB Equation is satisfied,
+    display the epsilon value, and optionally return the counterexample if verification is not satisfied.
+
+    Args:
+        json_path (str): Path to the JSON file containing dReal results.
+
+    Returns:
+        dict: Parsed dReal result including epsilon, result details, and counterexample range if applicable.
+    """
+    logger = logging.getLogger(__name__)
+    
     try:
         # Load the JSON result from the specified file
         with open(json_path, "r") as file:

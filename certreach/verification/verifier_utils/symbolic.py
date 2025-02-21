@@ -121,6 +121,14 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
                 current_output = current_output.applyfunc(lambda x: sine_transform(x, frequency))
             elif act_type == 'relu':
                 current_output = current_output.applyfunc(lambda x: sympy.Max(0, x))
+            elif act_type == 'gelu':
+                # Approximate GELU symbolically using its definition
+                # GELU(x) ≈ 0.5x(1 + tanh(sqrt(2/π)(x + 0.044715x^3)))
+                current_output = current_output.applyfunc(
+                    lambda x: 0.5 * x * (1 + sympy.tanh(
+                        sympy.sqrt(2/sympy.pi) * (x + 0.044715 * x**3)
+                    ))
+                )
 
     logger.info(f"Successfully generated symbolic output for layer {layer_number}")
     return current_output

@@ -1,14 +1,16 @@
 import os
+<<<<<<< Updated upstream
 import json
+=======
+>>>>>>> Stashed changes
 import time
 import logging
 import torch
 from typing import Optional, List
 from dataclasses import dataclass
-from certreach.verification.verify import verify_system
+from certreach.verification.SMT_verifier import SMTVerifier
 from certreach.common.dataset import ReachabilityDataset
 from certreach.learning.training import train
-from copy import deepcopy
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,6 @@ class CEGISLoop:
         self.example = example
         self.args = args # To pass on arguments to training and dataset creation
         self.device = torch.device(args.device)
-        example.model = example.model.to(self.device)  # Ensure model is on correct device
         self.max_iterations = args.max_iterations
         self.current_epsilon = args.epsilon
         self.best_epsilon = float('inf')
@@ -44,8 +45,14 @@ class CEGISLoop:
         self.timing_history = []
         self.current_symbolic_model = None
         self.min_epsilon = args.min_epsilon
+<<<<<<< Updated upstream
         self.pruning_threshold = getattr(args, 'pruning_threshold', 0.01)  # Default threshold if not specified
         self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
+=======
+        self.pruning_threshold = args.pruning_threshold if hasattr(args, 'pruning_threshold') else 0.01
+        self.prune_after_initial = args.prune_after_initial if hasattr(args, 'prune_after_initial') else False
+        self.verifier = args.verifier if hasattr(args, 'verifier') else SMTVerifier()
+>>>>>>> Stashed changes
                 
         # Initialize dataset if not already existing
         self.dataset = ReachabilityDataset(
@@ -66,11 +73,15 @@ class CEGISLoop:
         iteration_count = 0
         start_time = time.time()
         model_config = self.example.model.get_config()
+<<<<<<< Updated upstream
         system_specifics = {
             'name': self.example.Name,
             'root_path': self.example.root_path
         }
 
+=======
+        
+>>>>>>> Stashed changes
         # Initial training if starting from scratch
         if train_first:
             logger.info("Starting initial training before verification loop")
@@ -125,19 +136,14 @@ class CEGISLoop:
                 model_state = {k: v.cpu() for k, v in self.example.model.state_dict().items()}
             
             # Get verification result and timing info
-            verification_result, timing_info, symbolic_model = verify_system(
+            success, counterexample, timing_info = self.verifier.verify_system(
                 model_state=model_state,
                 model_config=model_config,
                 system_specifics=system_specifics,
                 compute_hamiltonian=self.example.hamiltonian_fn,
                 compute_boundary=self.example.boundary_fn,
-                epsilon=self.current_epsilon,
-                symbolic_model=self.current_symbolic_model
+                epsilon=self.current_epsilon
             )
-            
-            # Store symbolic model for potential reuse
-            self.current_symbolic_model = symbolic_model
-            
             # Store timing information
             self.timing_history.append(TimingStats(
                 training_time=getattr(self, 'last_training_time', 0.0),
@@ -145,9 +151,13 @@ class CEGISLoop:
                 verification_time=timing_info['verification_time']
             ))
             
+<<<<<<< Updated upstream
             counterexample = self._process_verification_results()
             
             if counterexample is None:
+=======
+            if success:
+>>>>>>> Stashed changes
                 # Verification succeeded, try smaller epsilon
                 with torch.no_grad():  # No gradients needed for model state saving
                     if self.current_epsilon < self.best_epsilon:
@@ -168,6 +178,16 @@ class CEGISLoop:
                     self.args.epsilon = self.current_epsilon
             else:
                 # Train on counterexample
+<<<<<<< Updated upstream
+=======
+                
+                # Create a subdirectory for this counterexample iteration inside the checkpoint directory
+                counter_dir = os.path.join(base_dir, f"iteration_{iteration_count+1}")
+                os.makedirs(counter_dir, exist_ok=True)
+                self.example.root_path = counter_dir
+                logger.info(f"Created new iteration directory: {counter_dir}")
+
+>>>>>>> Stashed changes
                 train_start = time.time()
                 self.dataset.add_counterexample(counterexample)
                 train(
