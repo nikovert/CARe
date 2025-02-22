@@ -31,6 +31,8 @@ def train(model: torch.nn.Module,
           use_amp: bool = True,
           l1_lambda: float = 1e-2,  # Changed default to 1e-4 for L1 regularization
           weight_decay: float = 1e-2,  # Changed default to 1e-5 for L2 regularization
+          is_finetuning: bool = False,  # New parameter to indicate fine-tuning
+          momentum: float = 0.9,  # New parameter for momentum during fine-tuning
           **kwargs
           ) -> None:
     """
@@ -80,13 +82,33 @@ def train(model: torch.nn.Module,
     # Ensure model and data are on the correct device
     model = model.to(device)
     
-    # Configure optimizer with device-specific settings
-    optim = torch.optim.Adam(
-        model.parameters(),
-        lr=lr,
-        weight_decay=weight_decay,
-        **kwargs
-    )
+    # Adjust optimizer settings based on whether we're fine-tuning
+    if is_finetuning:
+        # Use SGD with momentum for fine-tuning
+        optim = torch.optim.SGD(
+            model.parameters(),
+            lr=lr,
+            momentum=momentum,
+            weight_decay=weight_decay * 0.1,  # Reduce regularization during fine-tuning
+            **kwargs
+        )
+        # Create a learning rate scheduler for fine-tuning
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optim,
+            mode='min',
+            factor=0.5,
+            patience=5,
+            verbose=True
+        )
+    else:
+        # Use Adam for initial training
+        optim = torch.optim.Adam(
+            model.parameters(),
+            lr=lr,
+            weight_decay=weight_decay,
+            **kwargs
+        )
+        scheduler = None
 
     # Initialize curriculum
     curriculum = Curriculum(
@@ -123,6 +145,9 @@ def train(model: torch.nn.Module,
 
     with tqdm(total=epochs) as pbar:
         train_losses = []
+        best_loss = float('inf')
+        patience_counter = 0
+        
         for epoch in range(start_epoch, epochs): 
             start_time = time.time()
             # Update curriculum scheduler epoch at the start of each epoch
@@ -203,6 +228,26 @@ def train(model: torch.nn.Module,
 
             pbar.update(1)
 
+            # Learning rate scheduling for fine-tuning
+            if is_finetuning and scheduler is not None:
+                scheduler.step(train_loss)
+                
+                # Early stopping for fine-tuning
+                if train_loss < best_loss:
+                    best_loss = train_loss
+                    patience_counter = 0
+                    # Save best model during fine-tuning
+                    model.save_checkpoint(
+                        name='model_best_finetuned',
+                        optimizer=optim,
+                        epoch=epoch
+                    )
+                else:
+                    patience_counter += 1
+                    if patience_counter >= 10:  # Early stopping after 10 epochs without improvement
+                        logger.info("Early stopping triggered")
+                        break
+
         # Save final model
         model.save_checkpoint(
             name='model_final',
@@ -214,3 +259,14 @@ def train(model: torch.nn.Module,
         # Save final losses
         np.savetxt(checkpoints_dir / 'train_losses_final.txt', 
                    np.array(train_losses))
+
+    # After training, load the best model if we were fine-tuning
+    if is_finetuning:
+        try:
+            best_model_path = Path(model_dir) / 'checkpoints' / 'model_best_finetuned.pth'
+            if best_model_path.exists():
+                checkpoint = torch.load(best_model_path)
+                model.load_state_dict(checkpoint['model'])
+                logger.info("Loaded best fine-tuned model")
+        except Exception as e:
+            logger.warning(f"Could not load best fine-tuned model: {e}")

@@ -44,6 +44,9 @@ class CEGISLoop:
         self.min_epsilon = args.min_epsilon
         self.pruning_threshold = getattr(args, 'pruning_threshold', 0.01)  # Default threshold if not specified
         self.prune_after_initial = getattr(args, 'prune_after_initial', False)  # Whether to prune after initial training
+        self.initial_lr = args.lr
+        self.fine_tune_lr = args.lr * 0.1  # Lower learning rate for fine-tuning
+        self.fine_tune_epochs = args.num_epochs // 4  # Fewer epochs for fine-tuning
                 
         # Initialize dataset if not already existing
         self.dataset = ReachabilityDataset(
@@ -89,7 +92,8 @@ class CEGISLoop:
                 time_min=self.args.tMin,
                 time_max=self.args.tMax,
                 validation_fn=self.example.validate,
-                device=self.device
+                device=self.device,
+                is_finetuning=False  # Initial training is not fine-tuning
             )
             self.last_training_time = time.time() - train_start
             
@@ -114,7 +118,8 @@ class CEGISLoop:
                     time_min=self.args.tMin,
                     time_max=self.args.tMax,
                     validation_fn=self.example.validate,
-                    device=self.device
+                    device=self.device,
+                    is_finetuning=True  # Retraining pruned model is fine-tuning
                 )
                 self.last_training_time += time.time() - train_start
 
@@ -181,7 +186,7 @@ class CEGISLoop:
                     # Take midpoint of interval as the counterexample point
                     ce_list.append((interval[0] + interval[1]) / 2)
                 counterexample = torch.tensor(ce_list, device=self.device)
-                
+
                 # Create a subdirectory for this counterexample iteration inside the checkpoint directory
                 counter_dir = os.path.join(base_dir, f"iteration_{iteration_count+1}")
                 os.makedirs(counter_dir, exist_ok=True)
@@ -190,23 +195,27 @@ class CEGISLoop:
 
                 train_start = time.time()
                 self.dataset.add_counterexample(counterexample)
+                
+                # Fine-tune the model
                 train(
                     model=self.example.model,
                     dataset=self.dataset,
-                    epochs=self.args.num_epochs // 5,
-                    lr=self.args.lr * 0.1,  # Lower learning rate for counterexample training
+                    epochs=self.fine_tune_epochs,
+                    lr=self.fine_tune_lr,
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
-                    pretrain_percentage= 0.0,
+                    pretrain_percentage=0.0,  # No pretraining during fine-tuning
                     time_min=self.args.tMin,
                     time_max=self.args.tMax,
                     validation_fn=self.example.validate,
-                    device=self.device
+                    device=self.device,
+                    is_finetuning=True,  # Set fine-tuning flag for counterexample training
+                    momentum=0.9  # Add momentum for fine-tuning
                 )
                 self.last_training_time = time.time() - train_start
                 self.current_symbolic_model = None  # Reset symbolic model after training
-                
+
             iteration_count += 1
         
         total_time = time.time() - start_time
