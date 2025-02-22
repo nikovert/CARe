@@ -97,9 +97,16 @@ def train(model: torch.nn.Module,
             optim,
             mode='min',
             factor=0.5,
-            patience=5,
-            verbose=True
+            patience=5
         )
+        
+        # Add custom learning rate logging callback
+        def log_lr(optimizer):
+            current_lr = optimizer.param_groups[0]['lr']
+            logger.info(f"Learning rate adjusted to: {current_lr}")
+            
+        # Store the callback with the scheduler
+        scheduler.log_lr = log_lr
     else:
         # Use Adam for initial training
         optim = torch.optim.Adam(
@@ -126,10 +133,8 @@ def train(model: torch.nn.Module,
     if start_epoch > 0:
         try:
             model_path = Path(model_dir) / 'checkpoints' / f'model_epoch_{start_epoch:04d}.pth'
-            checkpoint = torch.load(model_path)
-            model.load_state_dict(checkpoint['model'])
+            model.load_checkpoint(model_path)
             model.train()
-            optim.load_state_dict(checkpoint['optimizer'])
             logger.info(f"Loaded checkpoint from epoch {start_epoch}")
         except FileNotFoundError:
             logger.error(f"Checkpoint file not found: {model_path}")
@@ -230,7 +235,11 @@ def train(model: torch.nn.Module,
 
             # Learning rate scheduling for fine-tuning
             if is_finetuning and scheduler is not None:
+                prev_lr = optim.param_groups[0]['lr']
                 scheduler.step(train_loss)
+                # Log if learning rate changed
+                if prev_lr != optim.param_groups[0]['lr']:
+                    scheduler.log_lr(optim)
                 
                 # Early stopping for fine-tuning
                 if train_loss < best_loss:
@@ -265,8 +274,7 @@ def train(model: torch.nn.Module,
         try:
             best_model_path = Path(model_dir) / 'checkpoints' / 'model_best_finetuned.pth'
             if best_model_path.exists():
-                checkpoint = torch.load(best_model_path)
-                model.load_state_dict(checkpoint['model'])
+                model, checkpoint = model.load_checkpoint(best_model_path)
                 logger.info("Loaded best fine-tuned model")
         except Exception as e:
             logger.warning(f"Could not load best fine-tuned model: {e}")

@@ -107,7 +107,7 @@ def parse_args():
     # Adjust parameters based on mode
     if args.quick_mode:
         args.num_epochs = 10
-        args.max_iterations = 2
+        args.max_iterations = 3
         args.batch_size = 16
 
     # Set pin_memory based on device type if not explicitly set
