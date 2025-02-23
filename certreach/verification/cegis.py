@@ -42,8 +42,8 @@ class CEGISLoop:
         self.timing_history = []
         self.current_symbolic_model = None
         self.min_epsilon = args.min_epsilon
-        self.pruning_threshold = getattr(args, 'pruning_threshold', 0.01)  # Default threshold if not specified
-        self.prune_after_initial = getattr(args, 'prune_after_initial', False)  # Whether to prune after initial training
+        self.pruning_percentage = getattr(args, 'pruning_percentage', 0.25)  # Default threshold if not specified
+        self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
         self.initial_lr = args.lr
         self.fine_tune_lr = args.lr * 0.1  # Lower learning rate for fine-tuning
         self.fine_tune_epochs = args.num_epochs // 4  # Fewer epochs for fine-tuning
@@ -99,8 +99,7 @@ class CEGISLoop:
             
             # Prune the model after initial training if enabled
             if self.prune_after_initial:
-                logger.info(f"Pruning model with threshold {self.pruning_threshold}")
-                stats = self.example.model.prune_weights(self.pruning_threshold)
+                stats = self.example.model.prune_weights(self.pruning_percentage)
                 logger.info(f"Pruning stats: {stats}")
                 
                 # Retrain the pruned model
@@ -255,8 +254,10 @@ class CEGISLoop:
             save_file="Final_Best_Model_Comparison.png"
         )
         
-        # Include pruning information in the final model stats
-        if self.example.model.is_pruned:
+        # Include pruning information in the final model stats if available
+        if (hasattr(self.example.model, 'is_pruned') and 
+            hasattr(self.example.model, 'get_pruning_statistics') and 
+            self.example.model.is_pruned):
             pruning_stats = self.example.model.get_pruning_statistics()
             logger.info("Final pruning statistics:")
             logger.info(f"Pruning ratio: {pruning_stats['pruning_ratio']:.2%}")

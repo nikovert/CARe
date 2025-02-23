@@ -45,7 +45,7 @@ def parse_args():
                   help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
-    p.add_argument('--num_nl', type=int, default=32,
+    p.add_argument('--num_nl', type=int, default=64,
                   help='Number of neurons per layer')
     p.add_argument('--use_polynomial', action='store_true', default=True,
                   help='Whether to use polynomial features')
@@ -69,13 +69,13 @@ def parse_args():
                   help='Whether to compute reachable set or tube')
 
     # Training Process Settings
-    p.add_argument('--pretrain_percentage', type=float, default=0.05,
+    p.add_argument('--pretrain_percentage', type=float, default=0.1,
                   help='Percentage of total steps to use for pretraining (0.0 to 1.0)')
     p.add_argument('--seed', type=int, default=0,
                   help='Random seed for reproducibility')
 
     # Verification Settings
-    p.add_argument('--epsilon', type=float, default=0.75,
+    p.add_argument('--epsilon', type=float, default=0.35,
                   help='Initial epsilon for verification')
     p.add_argument('--min_epsilon', type=float, default=0.01,
                   help='Minimum epsilon to achieve before terminating CEGIS')

@@ -93,12 +93,7 @@ def train(model: torch.nn.Module,
             **kwargs
         )
         # Create a learning rate scheduler for fine-tuning
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optim,
-            mode='min',
-            factor=0.5,
-            patience=5
-        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optim, patience=1000, cooldown=200)
         
         # Add custom learning rate logging callback
         def log_lr(optimizer):
@@ -123,7 +118,8 @@ def train(model: torch.nn.Module,
         pretrain_percentage=pretrain_percentage,
         total_steps=epochs,
         time_min=time_min,
-        time_max=time_max
+        time_max=time_max,
+        rollout=not is_finetuning  # Disable rollout during fine-tuning
     )
 
     # Initialize gradient scaler for AMP
@@ -253,7 +249,7 @@ def train(model: torch.nn.Module,
                     )
                 else:
                     patience_counter += 1
-                    if patience_counter >= 10:  # Early stopping after 10 epochs without improvement
+                    if patience_counter >= 10000:  # Early stopping after 1000 epochs without improvement
                         logger.info("Early stopping triggered")
                         break
 

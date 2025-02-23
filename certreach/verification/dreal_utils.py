@@ -14,7 +14,8 @@ def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[d
     """Helper function to check a single constraint."""
     logger.debug(f"Starting constraint check with precision {precision}")
     result = CheckSatisfiability(constraint, precision)
-    logger.debug(f"Constraint check completed. Found counterexample: {result is not None}")
+    if result is not None:
+        logger.info(f"Constraint check completed. Found counterexample: {result}")
     return result
 
 def parse_counterexample(result_str):
@@ -103,7 +104,7 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     
     result = None
     timing_info = {}
-    delta = epsilon / 10
+    delta = min(epsilon / 10, 0.01)
     
     if execution_mode == "parallel":
         logger.info("Starting parallel constraint checks...")
