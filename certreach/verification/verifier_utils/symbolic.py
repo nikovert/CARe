@@ -154,7 +154,7 @@ def parallel_substitution_task(args):
     # Using xreplace here for fast, dictionary-based substitution
     return expr.xreplace(substitution_map)
 
-def combine_all_layers_parallelized(state_dict, config, simplify=False):
+def combine_all_layers_parallelized(state_dict, config, simplify=True):
     """
     Combine all layers using state dict directly.
 
@@ -234,7 +234,7 @@ def extract_symbolic_model(state_dict: Dict[str, torch.Tensor], config: Dict[str
     
     # Get and save symbolic expression
     symbolic_expression = combine_all_layers_parallelized(
-        state_dict, config, simplify=False
+        state_dict, config, simplify=True
     )
 
     symbolic_file = os.path.join(save_path, "symbolic_model.txt")

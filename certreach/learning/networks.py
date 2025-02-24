@@ -406,13 +406,15 @@ class SingleBVPNet(torch.nn.Module):
             default_config = {
                 'mode': 'mlp',
                 'activation_type': 'sine',
-                'use_polynomial': False,
+                'use_polynomial': True,
                 'poly_degree': 2
             }
             
             if 'model_config' not in checkpoint:
                 # Infer configuration from state dict
                 state_dict = checkpoint['model_state_dict']
+                # Filter out mask buffers for configuration inference
+                state_dict = {k: v for k, v in state_dict.items() if not k.startswith('mask_')}
                 input_layer = next(key for key in state_dict.keys() if 'net.0.0.weight' in key)
                 output_layer = next(key for key in state_dict.keys() if key.endswith('.weight'))
                 in_features = state_dict[input_layer].shape[1]
@@ -438,7 +440,27 @@ class SingleBVPNet(torch.nn.Module):
             # Create and configure model
             model = SingleBVPNet(**model_config)
             model.to(device)
-            model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+            
+            # Load state dict and handle masks
+            state_dict = checkpoint['model_state_dict']
+            
+            # Separate masks from other state dict entries
+            mask_dict = {k: v for k, v in state_dict.items() if k.startswith('mask_')}
+            model_dict = {k: v for k, v in state_dict.items() if not k.startswith('mask_')}
+            
+            # First load the model weights
+            model.load_state_dict(model_dict, strict=True)
+            
+            # Then register and load masks if present
+            if mask_dict:
+                model._is_pruned = True
+                for mask_name, mask_tensor in mask_dict.items():
+                    model.register_buffer(mask_name, mask_tensor)
+                    # Apply mask to corresponding weight
+                    param_name = mask_name.replace('mask_', '').replace('_', '.')
+                    if hasattr(model, param_name):
+                        param = getattr(model, param_name)
+                        param.data *= mask_tensor
             
             if eval_mode:
                 model.eval()
@@ -464,17 +486,52 @@ class SingleBVPNet(torch.nn.Module):
         """Convert parameter name to valid buffer name by replacing dots with underscores."""
         return f"mask_{param_name.replace('.', '_')}"
 
-    def prune_weights(self, threshold: float) -> Dict[str, float]:
+    def _calculate_threshold_from_percentage(self, percentage: float, param_list: list) -> float:
         """
-        Prune weights smaller than the threshold (in absolute value).
+        Calculate threshold value that would prune the specified percentage of weights.
+        
+        Args:
+            percentage (float): Percentage of weights to prune (0.0 to 1.0)
+            param_list (list): List of parameter tensors to consider
+            
+        Returns:
+            float: Threshold value that would prune the specified percentage
+        """
+        if not 0.0 <= percentage <= 1.0:
+            raise ValueError("Percentage must be between 0.0 and 1.0")
+            
+        # Concatenate all weights into a single tensor
+        all_weights = torch.cat([p.abs().flatten() for p in param_list])
+        
+        if len(all_weights) == 0:
+            return 0.0
+            
+        # Calculate the threshold that would prune the desired percentage
+        k = int(len(all_weights) * percentage)
+        if k == 0:  # If percentage is too small
+            return float(all_weights.min()) - 1.0
+        if k == len(all_weights):  # If percentage is 1.0
+            return float(all_weights.max()) + 1.0
+            
+        return float(all_weights.kthvalue(k)[0])
+
+    def prune_weights(self, percentage: float) -> Dict[str, float]:
+        """
+        Prune specified percentage of smallest weights (by absolute value).
         Creates and applies masks as registered buffers with valid names.
         
         Args:
-            threshold (float): Absolute threshold value for pruning
-            
+            percentage (float): Percentage of weights to prune (0.0 to 1.0)
+                
         Returns:
             Dict containing pruning statistics
         """
+        # Get list of weight parameters
+        weight_params = [p for name, p in self.named_parameters() if 'weight' in name]
+        
+        # Calculate threshold based on percentage
+        threshold = self._calculate_threshold_from_percentage(percentage, weight_params)
+        
         total_params = 0
         pruned_params = 0
         
@@ -500,7 +557,8 @@ class SingleBVPNet(torch.nn.Module):
             'total_params': total_params,
             'pruned_params': pruned_params,
             'pruning_ratio': pruned_params / total_params if total_params > 0 else 0,
-            'threshold': threshold
+            'threshold': threshold,
+            'target_percentage': percentage
         }
         
         return stats

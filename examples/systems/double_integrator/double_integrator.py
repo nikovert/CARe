@@ -2,6 +2,7 @@ import os
 import torch
 import logging
 import numpy as np
+from math import sqrt
 import torch.multiprocessing as mp
 from typing import Optional
 import matplotlib
@@ -22,18 +23,18 @@ mp.set_start_method('spawn', force=True)
 
 logger = logging.getLogger(__name__)  # Move logger to module level
 
-def double_integrator_boundary(states, radius=0.25):
+def double_integrator_boundary(states, radius=sqrt(0.25)):
     """Compute boundary values for both PyTorch tensors and dReal variables."""
     # Check if using PyTorch tensors
     using_torch = isinstance(states, torch.Tensor)
     
     if using_torch:
-        return torch.norm(states, dim=1, keepdim=True) - radius
+        return torch.norm(states, dim=1, keepdim=True)**2 - radius**2
     else:
         # dReal mode - coords will be a list of variables [t, x, v]
         x, v = states[0], states[1]
         # Manual computation of L2 norm for dReal
-        return (x * x + v * v)**0.5 - radius
+        return (x * x + v * v) - radius**2
 
 @register_example
 class DoubleIntegrator:

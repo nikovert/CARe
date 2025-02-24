@@ -41,10 +41,14 @@ class CEGISLoop:
         self.timing_history = []
         self.current_symbolic_model = None
         self.min_epsilon = args.min_epsilon
-        self.pruning_threshold = getattr(args, 'pruning_threshold', 0.01)  # Default threshold if not specified
+        self.pruning_percentage = getattr(args, 'pruning_percentage', 0.25)  # Default threshold if not specified
         self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
         self.verifier = getattr(args, 'verifier', SMTVerifier())
 
+        self.initial_lr = args.lr
+        self.fine_tune_lr = args.lr * 0.1  # Lower learning rate for fine-tuning
+        self.fine_tune_epochs = args.num_epochs // 4  # Fewer epochs for fine-tuning
+                
         # Initialize dataset if not already existing
         self.dataset = ReachabilityDataset(
             batch_size=args.batch_size,
@@ -63,14 +67,17 @@ class CEGISLoop:
         """Run the CEGIS loop with proper CUDA memory management."""
         iteration_count = 0
         start_time = time.time()
+        base_dir = self.example.root_path
+        
         model_config = self.example.model.get_config()
-        system_specifics = {
-            'name': self.example.Name,
-            'root_path': self.example.root_path
-        }
 
         # Initial training if starting from scratch
         if train_first:
+            # Create initial training directory
+            initial_dir = os.path.join(base_dir, "initial_training")
+            os.makedirs(initial_dir, exist_ok=True)
+            self.example.root_path = initial_dir
+            
             logger.info("Starting initial training before verification loop")
             train_start = time.time()
             train(
@@ -85,14 +92,14 @@ class CEGISLoop:
                 time_min=self.args.tMin,
                 time_max=self.args.tMax,
                 validation_fn=self.example.validate,
-                device=self.device
+                device=self.device,
+                is_finetuning=False  # Initial training is not fine-tuning
             )
             self.last_training_time = time.time() - train_start
             
             # Prune the model after initial training if enabled
             if self.prune_after_initial:
-                logger.info(f"Pruning model with threshold {self.pruning_threshold}")
-                stats = self.example.model.prune_weights(self.pruning_threshold)
+                stats = self.example.model.prune_weights(self.pruning_percentage)
                 logger.info(f"Pruning stats: {stats}")
                 
                 # Retrain the pruned model
@@ -102,7 +109,7 @@ class CEGISLoop:
                     model=self.example.model,
                     dataset=self.dataset,
                     epochs=self.args.num_epochs // 2,  # Shorter training period for fine-tuning
-                    lr=self.args.lr * 0.1,  # Lower learning rate for fine-tuning
+                    lr=self.args.lr * 0.5,  # Lower learning rate for fine-tuning
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
@@ -110,13 +117,20 @@ class CEGISLoop:
                     time_min=self.args.tMin,
                     time_max=self.args.tMax,
                     validation_fn=self.example.validate,
-                    device=self.device
+                    device=self.device,
+                    is_finetuning=True  # Retraining pruned model is fine-tuning
                 )
                 self.last_training_time += time.time() - train_start
 
         while iteration_count < self.max_iterations:
             logger.info("Starting iteration %d with epsilon: %.4f", 
                        iteration_count + 1, self.current_epsilon)
+            
+            # Update system_specifics with current root_path before verification
+            system_specifics = {
+                'name': self.example.Name,
+                'root_path': self.example.root_path
+            }
             
             # Extract model state and config, keeping tensors on CPU for verification
             with torch.no_grad():
@@ -126,7 +140,7 @@ class CEGISLoop:
             success, counterexample, timing_info = self.verifier.verify_system(
                 model_state=model_state,
                 model_config=model_config,
-                system_specifics=system_specifics,
+                system_specifics=system_specifics,  # Use updated system_specifics
                 compute_hamiltonian=self.example.hamiltonian_fn,
                 compute_boundary=self.example.boundary_fn,
                 epsilon=self.current_epsilon
@@ -153,32 +167,43 @@ class CEGISLoop:
                     if self.current_epsilon <= self.min_epsilon:
                         logger.info(f"Reached minimum epsilon threshold: {self.min_epsilon}")
                         break
-                    self.current_epsilon *= 0.5
+                    self.current_epsilon *= 0.75  # Reduce epsilon by 25%
                     # Ensure we don't go below minimum epsilon
                     self.current_epsilon = max(self.current_epsilon, self.min_epsilon)
                     self.args.epsilon = self.current_epsilon
             else:
                 # Train on counterexample
+                self.current_epsilon *= 1.05  # Increase epsilon by 5%
+
+                # Create a subdirectory for this counterexample iteration inside the checkpoint directory
+                counter_dir = os.path.join(base_dir, f"iteration_{iteration_count+1}")
+                os.makedirs(counter_dir, exist_ok=True)
+                self.example.root_path = counter_dir
+                logger.info(f"Created new iteration directory: {counter_dir}")
 
                 train_start = time.time()
                 self.dataset.add_counterexample(counterexample)
+                
+                # Fine-tune the model
                 train(
                     model=self.example.model,
                     dataset=self.dataset,
-                    epochs=self.args.num_epochs,
-                    lr=self.args.lr * 0.1,  # Lower learning rate to maintain pruned weights
+                    epochs=self.fine_tune_epochs,
+                    lr=self.fine_tune_lr,
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
-                    pretrain_percentage= 0.0 if iteration_count>1 else self.args.pretrain_percentage,  # Use pretrain only first time
+                    pretrain_percentage=0.0,  # No pretraining during fine-tuning
                     time_min=self.args.tMin,
                     time_max=self.args.tMax,
                     validation_fn=self.example.validate,
-                    device=self.device
+                    device=self.device,
+                    is_finetuning=True,  # Set fine-tuning flag for counterexample training
+                    momentum=0.9  # Add momentum for fine-tuning
                 )
                 self.last_training_time = time.time() - train_start
                 self.current_symbolic_model = None  # Reset symbolic model after training
-                
+
             iteration_count += 1
         
         total_time = time.time() - start_time
@@ -218,8 +243,10 @@ class CEGISLoop:
             save_file="Final_Best_Model_Comparison.png"
         )
         
-        # Include pruning information in the final model stats
-        if self.example.model.is_pruned:
+        # Include pruning information in the final model stats if available
+        if (hasattr(self.example.model, 'is_pruned') and 
+            hasattr(self.example.model, 'get_pruning_statistics') and 
+            self.example.model.is_pruned):
             pruning_stats = self.example.model.get_pruning_statistics()
             logger.info("Final pruning statistics:")
             logger.info(f"Pruning ratio: {pruning_stats['pruning_ratio']:.2%}")

@@ -1,5 +1,4 @@
 import torch
-import dreal
 from certreach.learning.loss_functions import HJILossFunction
 
 class DoubleIntegratorLoss(HJILossFunction):
@@ -25,10 +24,10 @@ class DoubleIntegratorLoss(HJILossFunction):
         
         if using_torch:
             p1, p2 = p[..., 0], p[..., 1]
-            x1, x2 = x[..., 0], x[..., 1]
+            x2 = x[..., 1]
         else:
             p1, p2 = p[0], p[1]
-            x1, x2 = x[0], x[1]
+            x2 = x[1]
             
         ham = p1 * x2
 
@@ -41,7 +40,7 @@ class DoubleIntegratorLoss(HJILossFunction):
                 ham += sign * input_magnitude * torch.abs(p2)
             else:
                 # Use dreal.Max to compute absolute value: |p2| = Max(p2, -p2)
-                abs_p2 = dreal.Max(p2, -p2)
+                abs_p2 = abs(p2) # dreal.Max(p2, -p2)
                 ham += sign * float(input_magnitude.item()) * abs_p2
         else:
             # Update asymmetric bounds branch with arithmetic formulation
@@ -54,7 +53,7 @@ class DoubleIntegratorLoss(HJILossFunction):
                 # Replace if_then_else with arithmetic operations:
                 a = float(self.input_max.item())
                 b = float(self.input_min.item())
-                abs_p2 = dreal.Max(p2, -p2)
+                abs_p2 = abs(p2) # dreal.Max(p2, -p2)
                 # For reach: use a when p2>=0, and b when p2<0, expressed as:
                 #   (a+b)/2 * p2 + (a-b)/2 * |p2|
                 # For avoid: flip the sign on the absolute value term

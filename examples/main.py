@@ -35,9 +35,9 @@ def parse_args():
                   help='Number of epochs between model checkpoints')
 
     # Model Settings
-    p.add_argument('--model_type', type=str, default='gelu', choices=['sine', 'relu', 'gelu'],
+    p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'relu'],
                   help='Activation function for the neural network')
-    p.add_argument('--model_mode', type=str, default='mlp', choices=['mlp', 'rbf', 'pinn'],
+    p.add_argument('--model_mode', type=str, default='mlp', choices=['mlp'],
                   help='Type of neural network architecture')
     p.add_argument('--in_features', type=int, default=3,
                   help='Number of input features for the network')
@@ -45,7 +45,7 @@ def parse_args():
                   help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
-    p.add_argument('--num_nl', type=int, default=32,
+    p.add_argument('--num_nl', type=int, default=64,
                   help='Number of neurons per layer')
     p.add_argument('--use_polynomial', action='store_true', default=True,
                   help='Whether to use polynomial features')
@@ -69,19 +69,19 @@ def parse_args():
                   help='Whether to compute reachable set or tube')
 
     # Training Process Settings
-    p.add_argument('--pretrain_percentage', type=float, default=0.001,
+    p.add_argument('--pretrain_percentage', type=float, default=0.1,
                   help='Percentage of total steps to use for pretraining (0.0 to 1.0)')
     p.add_argument('--seed', type=int, default=0,
                   help='Random seed for reproducibility')
 
     # Verification Settings
-    p.add_argument('--epsilon', type=float, default=0.01,
+    p.add_argument('--epsilon', type=float, default=0.35,
                   help='Initial epsilon for verification')
     p.add_argument('--min_epsilon', type=float, default=0.01,
                   help='Minimum epsilon to achieve before terminating CEGIS')
     p.add_argument('--epsilon_radius', type=float, default=0.1,
                   help='Radius around counterexample points for sampling')
-    p.add_argument('--max_iterations', type=int, default=5,
+    p.add_argument('--max_iterations', type=int, default=50,
                   help='Maximum number of CEGIS iterations')
     
     # Add device argument
@@ -91,8 +91,6 @@ def parse_args():
     # Training Mode Settings
     p.add_argument('--quick_mode', action='store_true', default=False,
                   help='Enable quick testing mode with reduced epochs and iterations')
-    p.add_argument('--full_mode', action='store_true', default=False,
-                  help='Enable full training mode with complete epochs and iterations')
     
     # Add solution checking argument
     p.add_argument('--check_solution', action='store_true', default=True,
@@ -109,14 +107,8 @@ def parse_args():
     # Adjust parameters based on mode
     if args.quick_mode:
         args.num_epochs = 10
-        args.max_iterations = 2
-        args.epsilon = 0.35
+        args.max_iterations = 3
         args.batch_size = 16
-    elif args.full_mode:
-        args.num_epochs = 5000
-        args.max_iterations = 10
-        args.epsilon = 0.35
-        args.batch_size = 128
 
     # Set pin_memory based on device type if not explicitly set
     args.pin_memory = args.device == 'cpu'
@@ -140,58 +132,6 @@ def load_model_safely(example, model_path, device):
     except Exception as e:
         logger.error(f"Failed to load model: {str(e)}")
         return False
-
-def find_best_model_path(model_dir):
-    """Find the best available model path by checking the most recent numbered directory"""
-    logger = logging.getLogger(__name__)
-    
-    if not os.path.exists(model_dir):
-        logger.warning(f"Model directory {model_dir} does not exist")
-        return None
-
-    # Look in parent directory (./logs) for numbered directories
-    parent_dir = os.path.dirname(model_dir)  # Gets ./logs from ./logs/double_integrator
-    base_name = os.path.basename(model_dir)  # Gets 'double_integrator'
-    
-    # Find all numbered directories matching the base name
-    numbered_dirs = []
-    for d in os.listdir(parent_dir):
-        full_path = os.path.join(parent_dir, d)
-        if not os.path.isdir(full_path):
-            continue
-        # Match directories that start with base_name and end with a number
-        if d.startswith(base_name) and '_' in d:
-            try:
-                num = int(d.split('_')[-1])
-                numbered_dirs.append((num, d))
-            except (ValueError, IndexError):
-                continue
-    
-    # If we found numbered directories, use the highest one
-    if numbered_dirs:
-        _, latest_dir = max(numbered_dirs, key=lambda x: x[0])
-        latest_path = os.path.join(parent_dir, latest_dir)
-        checkpoint_dir = os.path.join(latest_path, 'checkpoints')
-        
-        if os.path.exists(checkpoint_dir):
-            for model_file in ['model_final.pth', 'model_current.pth']:
-                model_path = os.path.join(checkpoint_dir, model_file)
-                if os.path.exists(model_path):
-                    logger.info(f"Found model: {model_file} in numbered directory {latest_dir}")
-                    return model_path
-    
-    # Only fall back to direct checkpoints directory if no numbered directories found
-    direct_checkpoint_dir = os.path.join(model_dir, 'checkpoints')
-    if os.path.exists(direct_checkpoint_dir):
-        logger.warning("Falling back to non-numbered directory structure")
-        for model_file in ['model_final.pth', 'model_current.pth']:
-            model_path = os.path.join(direct_checkpoint_dir, model_file)
-            if os.path.exists(model_path):
-                logger.info(f"Found model: {model_file} in direct checkpoints directory")
-                return model_path
-    
-    logger.warning("No valid model file found in any directory")
-    return None
 
 def try_load_model_from_folder(example, folder_path, device, logger):
     """Try to load a model from a given folder path."""
