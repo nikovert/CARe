@@ -1,8 +1,4 @@
 import os
-<<<<<<< Updated upstream
-import json
-=======
->>>>>>> Stashed changes
 import time
 import logging
 import torch
@@ -45,15 +41,10 @@ class CEGISLoop:
         self.timing_history = []
         self.current_symbolic_model = None
         self.min_epsilon = args.min_epsilon
-<<<<<<< Updated upstream
         self.pruning_threshold = getattr(args, 'pruning_threshold', 0.01)  # Default threshold if not specified
         self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
-=======
-        self.pruning_threshold = args.pruning_threshold if hasattr(args, 'pruning_threshold') else 0.01
-        self.prune_after_initial = args.prune_after_initial if hasattr(args, 'prune_after_initial') else False
-        self.verifier = args.verifier if hasattr(args, 'verifier') else SMTVerifier()
->>>>>>> Stashed changes
-                
+        self.verifier = getattr(args, 'verifier', SMTVerifier())
+
         # Initialize dataset if not already existing
         self.dataset = ReachabilityDataset(
             batch_size=args.batch_size,
@@ -73,15 +64,11 @@ class CEGISLoop:
         iteration_count = 0
         start_time = time.time()
         model_config = self.example.model.get_config()
-<<<<<<< Updated upstream
         system_specifics = {
             'name': self.example.Name,
             'root_path': self.example.root_path
         }
 
-=======
-        
->>>>>>> Stashed changes
         # Initial training if starting from scratch
         if train_first:
             logger.info("Starting initial training before verification loop")
@@ -151,13 +138,7 @@ class CEGISLoop:
                 verification_time=timing_info['verification_time']
             ))
             
-<<<<<<< Updated upstream
-            counterexample = self._process_verification_results()
-            
-            if counterexample is None:
-=======
             if success:
->>>>>>> Stashed changes
                 # Verification succeeded, try smaller epsilon
                 with torch.no_grad():  # No gradients needed for model state saving
                     if self.current_epsilon < self.best_epsilon:
@@ -178,16 +159,7 @@ class CEGISLoop:
                     self.args.epsilon = self.current_epsilon
             else:
                 # Train on counterexample
-<<<<<<< Updated upstream
-=======
-                
-                # Create a subdirectory for this counterexample iteration inside the checkpoint directory
-                counter_dir = os.path.join(base_dir, f"iteration_{iteration_count+1}")
-                os.makedirs(counter_dir, exist_ok=True)
-                self.example.root_path = counter_dir
-                logger.info(f"Created new iteration directory: {counter_dir}")
 
->>>>>>> Stashed changes
                 train_start = time.time()
                 self.dataset.add_counterexample(counterexample)
                 train(
@@ -212,34 +184,6 @@ class CEGISLoop:
         total_time = time.time() - start_time
         return self._finalize_results(total_time)
 
-    def _process_verification_results(self) -> Optional[torch.Tensor]:
-        """Process verification results and return counterexample if found."""
-        dreal_result_path = f"{self.example.root_path}/dreal_result.json"
-        with open(dreal_result_path, 'r') as f:
-            result = json.load(f)
-            
-        if "HJB Equation Satisfied" in result["result"]:
-            logger.info("HJB Equation satisfied. Reducing epsilon.")
-            return None
-            
-        logger.info("Counterexample found. Will retrain model.")
-        # Extract counterexample points from the result string
-        counterexample_points = []
-        if "result" in result:
-            lines = result["result"].split('\n')
-            for line in lines:
-                if line.startswith('x_'):
-                    interval_str = line.split(':')[1].strip()[1:-1]
-                    lower, upper = map(float, interval_str.split(','))
-                    point = (lower + upper) / 2
-                    counterexample_points.append(point)
-        
-        if not counterexample_points:
-            logger.warning("No counterexample points found in dReal result")
-            return None
-        
-        return torch.tensor(counterexample_points, device=self.device)
-    
     def _finalize_results(self, total_time: float) -> CEGISResult:
         """Restore best model and generate final visualizations."""
         if not self.best_model_state:
