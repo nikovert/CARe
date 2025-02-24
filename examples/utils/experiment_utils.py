@@ -4,16 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def get_experiment_folder(logging_root, experiment_name):
-    """
-    Finds the next available experiment folder name and returns the previous folder path.
-    """
-    # Find existing folders that match the experiment name
-    if os.path.exists(logging_root):
-        folders = [f for f in os.listdir(logging_root) if f.startswith(experiment_name)]
-    else:
-        folders = []
-    
+def find_numbered_folder(folders):
     # Sort folders by their numeric suffix
     numbered_folders = []
     for folder in folders:
@@ -25,11 +16,28 @@ def get_experiment_folder(logging_root, experiment_name):
     
     numbered_folders.sort(reverse=True)
     
-    # Previous folder is the highest numbered one (for loading models)
-    prev_folder_path = None
-    if numbered_folders:
-        prev_folder = numbered_folders[0][1]
+    return numbered_folders
+
+def get_experiment_folder(logging_root, experiment_name):
+    """
+    Finds the next available experiment folder name and returns the previous folder path.
+    """
+    # Find existing folders that match the experiment name
+    if os.path.exists(logging_root):
+        folders = [f for f in os.listdir(logging_root) if f.startswith(experiment_name)]
+    else:
+        folders = []
+    
+    numbered_folders = find_numbered_folder(folders)
+    prev_folder = numbered_folders[0][1]
+    if prev_folder:
         prev_folder_path = os.path.join(logging_root, prev_folder)
+        iteration_folders = [f for f in os.listdir(prev_folder_path) if f.startswith("iteration")]
+        iteration_folders = find_numbered_folder(iteration_folders)
+        if iteration_folders:
+            prev_folder_path = os.path.join(prev_folder_path, iteration_folders[0][1])
+    else:
+        prev_folder_path = None
 
     # Calculate next folder name
     next_id = (numbered_folders[0][0] + 1) if numbered_folders else 1

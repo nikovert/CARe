@@ -401,13 +401,15 @@ class SingleBVPNet(torch.nn.Module):
             default_config = {
                 'mode': 'mlp',
                 'activation_type': 'sine',
-                'use_polynomial': False,
+                'use_polynomial': True,
                 'poly_degree': 2
             }
             
             if 'model_config' not in checkpoint:
                 # Infer configuration from state dict
                 state_dict = checkpoint['model_state_dict']
+                # Filter out mask buffers for configuration inference
+                state_dict = {k: v for k, v in state_dict.items() if not k.startswith('mask_')}
                 input_layer = next(key for key in state_dict.keys() if 'net.0.0.weight' in key)
                 output_layer = next(key for key in state_dict.keys() if key.endswith('.weight'))
                 in_features = state_dict[input_layer].shape[1]
@@ -433,7 +435,27 @@ class SingleBVPNet(torch.nn.Module):
             # Create and configure model
             model = SingleBVPNet(**model_config)
             model.to(device)
-            model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+            
+            # Load state dict and handle masks
+            state_dict = checkpoint['model_state_dict']
+            
+            # Separate masks from other state dict entries
+            mask_dict = {k: v for k, v in state_dict.items() if k.startswith('mask_')}
+            model_dict = {k: v for k, v in state_dict.items() if not k.startswith('mask_')}
+            
+            # First load the model weights
+            model.load_state_dict(model_dict, strict=True)
+            
+            # Then register and load masks if present
+            if mask_dict:
+                model._is_pruned = True
+                for mask_name, mask_tensor in mask_dict.items():
+                    model.register_buffer(mask_name, mask_tensor)
+                    # Apply mask to corresponding weight
+                    param_name = mask_name.replace('mask_', '').replace('_', '.')
+                    if hasattr(model, param_name):
+                        param = getattr(model, param_name)
+                        param.data *= mask_tensor
             
             if eval_mode:
                 model.eval()

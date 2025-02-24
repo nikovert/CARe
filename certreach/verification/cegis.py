@@ -72,7 +72,6 @@ class CEGISLoop:
 
         # Initial training if starting from scratch
         if train_first:
-        
             # Create initial training directory
             initial_dir = os.path.join(base_dir, "initial_training")
             os.makedirs(initial_dir, exist_ok=True)
@@ -178,6 +177,8 @@ class CEGISLoop:
                     self.args.epsilon = self.current_epsilon
             else:
                 # Train on counterexample
+                self.current_epsilon *= 1.05  # Increase epsilon by 5%
+
                 # Convert dictionary counterexample to tensor format
                 ce_list = []
                 for key in sorted(verification_result["counterexample"].keys()):

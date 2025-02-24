@@ -133,58 +133,6 @@ def load_model_safely(example, model_path, device):
         logger.error(f"Failed to load model: {str(e)}")
         return False
 
-def find_best_model_path(model_dir):
-    """Find the best available model path by checking the most recent numbered directory"""
-    logger = logging.getLogger(__name__)
-    
-    if not os.path.exists(model_dir):
-        logger.warning(f"Model directory {model_dir} does not exist")
-        return None
-
-    # Look in parent directory (./logs) for numbered directories
-    parent_dir = os.path.dirname(model_dir)  # Gets ./logs from ./logs/double_integrator
-    base_name = os.path.basename(model_dir)  # Gets 'double_integrator'
-    
-    # Find all numbered directories matching the base name
-    numbered_dirs = []
-    for d in os.listdir(parent_dir):
-        full_path = os.path.join(parent_dir, d)
-        if not os.path.isdir(full_path):
-            continue
-        # Match directories that start with base_name and end with a number
-        if d.startswith(base_name) and '_' in d:
-            try:
-                num = int(d.split('_')[-1])
-                numbered_dirs.append((num, d))
-            except (ValueError, IndexError):
-                continue
-    
-    # If we found numbered directories, use the highest one
-    if numbered_dirs:
-        _, latest_dir = max(numbered_dirs, key=lambda x: x[0])
-        latest_path = os.path.join(parent_dir, latest_dir)
-        checkpoint_dir = os.path.join(latest_path, 'checkpoints')
-        
-        if os.path.exists(checkpoint_dir):
-            for model_file in ['model_final.pth', 'model_current.pth']:
-                model_path = os.path.join(checkpoint_dir, model_file)
-                if os.path.exists(model_path):
-                    logger.info(f"Found model: {model_file} in numbered directory {latest_dir}")
-                    return model_path
-    
-    # Only fall back to direct checkpoints directory if no numbered directories found
-    direct_checkpoint_dir = os.path.join(model_dir, 'checkpoints')
-    if os.path.exists(direct_checkpoint_dir):
-        logger.warning("Falling back to non-numbered directory structure")
-        for model_file in ['model_final.pth', 'model_current.pth']:
-            model_path = os.path.join(direct_checkpoint_dir, model_file)
-            if os.path.exists(model_path):
-                logger.info(f"Found model: {model_file} in direct checkpoints directory")
-                return model_path
-    
-    logger.warning("No valid model file found in any directory")
-    return None
-
 def try_load_model_from_folder(example, folder_path, device, logger):
     """Try to load a model from a given folder path."""
     checkpoint_dir = os.path.join(folder_path, 'checkpoints')
