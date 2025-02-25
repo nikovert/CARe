@@ -9,7 +9,7 @@
             "args": [
                 "--example", "double_integrator",
                 "--run_mode", "train",
-                "--logging_root", "./logs",
+                "--logging_root", "./logs"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -42,7 +42,9 @@
                 "--example", "double_integrator",
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
-                "--quick_mode"
+                "--num_epochs", "10",
+                "--max_iterations", "3",
+                "--batch_size", "16"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -59,6 +61,7 @@
                 "--example", "double_integrator",
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
+                "--prune_after_initial"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,

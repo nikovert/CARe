@@ -154,7 +154,7 @@ def parallel_substitution_task(args):
     # Using xreplace here for fast, dictionary-based substitution
     return expr.xreplace(substitution_map)
 
-def combine_all_layers_parallelized(state_dict, config, simplify=True):
+def combine_all_layers_parallelized(state_dict, config, simplify=False):
     """
     Combine all layers using state dict directly.
 
@@ -213,8 +213,6 @@ def combine_all_layers_parallelized(state_dict, config, simplify=True):
         if simplify:
             combined_symbolic_model = sympy.simplify(combined_symbolic_model)
 
-        logger.debug(f"Layer {layer_number} combined. Total layers combined so far: {layer_number}.")
-
     logger.info(f"All {num_layers} layers combined successfully.")
     return combined_symbolic_model
 
@@ -233,9 +231,7 @@ def extract_symbolic_model(state_dict: Dict[str, torch.Tensor], config: Dict[str
     logger.info("Starting symbolic model extraction")
     
     # Get and save symbolic expression
-    symbolic_expression = combine_all_layers_parallelized(
-        state_dict, config, simplify=True
-    )
+    symbolic_expression = combine_all_layers_parallelized(state_dict, config)
 
     symbolic_file = os.path.join(save_path, "symbolic_model.txt")
     try:

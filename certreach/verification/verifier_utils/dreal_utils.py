@@ -376,6 +376,7 @@ def extract_dreal_partials(final_symbolic_expression):
            for i in range(len(input_symbols))},
         "additional_conditions": additional_conditions
     }
+    return results
 
 def parse_counterexample(result_str):
         """

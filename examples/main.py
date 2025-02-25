@@ -1,5 +1,4 @@
 import configargparse
-import json
 import os
 import logging
 from examples.log import configure_logging
@@ -7,6 +6,12 @@ import torch
 from certreach.verification.cegis import CEGISLoop
 from examples.factories import create_example, EXAMPLE_NAMES
 from examples.utils.experiment_utils import get_experiment_folder, setup_experiment_folder
+import numpy as np
+import random   
+import json
+
+# Create module-level logger
+logger = logging.getLogger(__name__)
 
 def parse_args():
     """Parse command line arguments."""
@@ -35,7 +40,7 @@ def parse_args():
                   help='Number of epochs between model checkpoints')
 
     # Model Settings
-    p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'relu'],
+    p.add_argument('--model_type', type=str, default='relu', choices=['sine', 'relu'],
                   help='Activation function for the neural network')
     p.add_argument('--model_mode', type=str, default='mlp', choices=['mlp'],
                   help='Type of neural network architecture')
@@ -71,6 +76,8 @@ def parse_args():
     # Training Process Settings
     p.add_argument('--pretrain_percentage', type=float, default=0.1,
                   help='Percentage of total steps to use for pretraining (0.0 to 1.0)')
+    p.add_argument('--prune_after_initial', action='store_true', default=False,
+                  help='Whether to prune the network after initial training phase')
     p.add_argument('--seed', type=int, default=0,
                   help='Random seed for reproducibility')
 
@@ -83,14 +90,12 @@ def parse_args():
                   help='Radius around counterexample points for sampling')
     p.add_argument('--max_iterations', type=int, default=50,
                   help='Maximum number of CEGIS iterations')
+    p.add_argument('--solver', type=str, default='auto', choices=['auto', 'dreal', 'z3'],
+                  help='SMT solver to use for verification (auto will select based on problem)')
     
     # Add device argument
     p.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
                   help='Device to use for computation (cuda/cpu)')
-
-    # Training Mode Settings
-    p.add_argument('--quick_mode', action='store_true', default=False,
-                  help='Enable quick testing mode with reduced epochs and iterations')
     
     # Add solution checking argument
     p.add_argument('--check_solution', action='store_true', default=True,
@@ -104,12 +109,6 @@ def parse_args():
 
     args = p.parse_args()
 
-    # Adjust parameters based on mode
-    if args.quick_mode:
-        args.num_epochs = 10
-        args.max_iterations = 3
-        args.batch_size = 16
-
     # Set pin_memory based on device type if not explicitly set
     args.pin_memory = args.device == 'cpu'
 
@@ -120,44 +119,52 @@ def cleanup():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-def load_model_safely(example, model_path, device):
+def load_model_safely(example, model_path):
     """Helper function to safely load model"""
-    logger = logging.getLogger(__name__)
     try:
         # Explicitly move model to device after loading
-        model, checkpoint = example.model.load_checkpoint(model_path, device=device)
-        example.model = model.to(device)  # Ensure model is on correct device
-        logger.info(f"Successfully loaded model from {model_path}")
+        example.model.load_checkpoint(model_path, example.device)
         return True
     except Exception as e:
         logger.error(f"Failed to load model: {str(e)}")
         return False
 
-def try_load_model_from_folder(example, folder_path, device, logger):
+def try_load_model_from_folder(example, folder_path):
     """Try to load a model from a given folder path."""
     checkpoint_dir = os.path.join(folder_path, 'checkpoints')
     if os.path.exists(checkpoint_dir):
         for model_file in ['model_final.pth', 'model_current.pth']:
             model_path = os.path.join(checkpoint_dir, model_file)
             if os.path.exists(model_path):
-                if load_model_safely(example, model_path, device):
+                if load_model_safely(example, model_path):
                     logger.info(f"Loaded model from {model_path}")
                     return True
     return False
 
 def main():
-    # Parse command line arguments
+    """Main function to run the experiments."""
     args = parse_args()
+
+    # Set random seeds for reproducibility
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    random.seed(args.seed)
     
-    # Set up logging with DEBUG level
-    configure_logging(None, log_level=logging.DEBUG)
-    logger = logging.getLogger(__name__)
+    # Make sure base directory exists
+    os.makedirs(args.logging_root, exist_ok=True)
+    
+    # Get appropriate experiment folder path and info
+    exp_folder_path, _, prev_folder_path = get_experiment_folder(args.logging_root, args.example)
+    setup_experiment_folder(exp_folder_path, create=True)
+    
+    # Configure logging - this sets up the root logger that all module loggers inherit from
+    log_file = os.path.join(exp_folder_path, 'training.log')
+    configure_logging(log_file, log_level=logging.DEBUG)
     
     # Simplified device setup for single GPU
     if args.device == 'cuda' and torch.cuda.is_available():
         device = torch.device('cuda:0')  # Use the only GPU
         logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
-        logger.info(f"Available GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
     else:
         device = torch.device('cpu')
         logger.info("Using CPU")
@@ -168,29 +175,18 @@ def main():
     example = create_example(args.example, args)
     example.device = device  # Ensure model is on device
     
-    # Make sure base directory exists
-    os.makedirs(args.logging_root, exist_ok=True)
-    
-    # Get appropriate experiment folder path and info
-    exp_folder_path, _, prev_folder_path = get_experiment_folder(args.logging_root, args.example)
-    loaded_model = False
-    
     # Initialize components before loading model
     example.initialize_components()
 
     # Try to load model from previous experiment folder if it exists
+    loaded_model = False
     if prev_folder_path:
-        loaded_model = try_load_model_from_folder(example, prev_folder_path, device, logger)
+        loaded_model = try_load_model_from_folder(example, prev_folder_path)
 
     # Print model information
     logger.info("Model Architecture:")
     print(example.model)
-
-    # Set up new experiment folder and logging
-    logger.info(f"Creating new experiment directory: {exp_folder_path}")
-    setup_experiment_folder(exp_folder_path, create=True)
-    log_file = os.path.join(exp_folder_path, 'training.log')
-    configure_logging(log_file)
+    
     example.root_path = exp_folder_path
 
     # Run based on mode
@@ -226,7 +222,6 @@ def main():
     elif args.run_mode == 'cegis':
         logger.info("Starting CEGIS phase")
         
-        logger.info(f"Starting {'quick' if args.quick_mode else 'full'} CEGIS loop")
         cegis = CEGISLoop(example, args)
         result = cegis.run(train_first=not loaded_model)
         

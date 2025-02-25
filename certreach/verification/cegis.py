@@ -43,7 +43,10 @@ class CEGISLoop:
         self.min_epsilon = args.min_epsilon
         self.pruning_percentage = getattr(args, 'pruning_percentage', 0.25)  # Default threshold if not specified
         self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
-        self.verifier = getattr(args, 'verifier', SMTVerifier())
+        
+        # Initialize verifier - use the specified solver preference if available
+        solver_preference = getattr(args, 'solver', 'auto')
+        self.verifier = SMTVerifier(device=self.device, solver_preference=solver_preference)
 
         self.initial_lr = args.lr
         self.fine_tune_lr = args.lr * 0.1  # Lower learning rate for fine-tuning
@@ -129,7 +132,10 @@ class CEGISLoop:
             # Update system_specifics with current root_path before verification
             system_specifics = {
                 'name': self.example.Name,
-                'root_path': self.example.root_path
+                'root_path': self.example.root_path,
+                'reachMode': getattr(self.example, 'reachMode', 'forward'),
+                'setType': getattr(self.example, 'setType', 'set'),
+                'additional_constraints': getattr(self.example, 'additional_constraints', None)
             }
             
             # Extract model state and config, keeping tensors on CPU for verification

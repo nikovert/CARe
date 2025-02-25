@@ -1,13 +1,11 @@
 import torch
 import torch.nn.functional as F
-from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 import time
 import numpy as np
 from pathlib import Path
-import shutil
 import logging
-from typing import Callable, Optional, Dict
+from typing import Callable, Optional
 from .curriculum import Curriculum
 from ..common.dataset import ReachabilityDataset
 import gc
