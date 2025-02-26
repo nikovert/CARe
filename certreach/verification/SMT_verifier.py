@@ -47,6 +47,7 @@ class SMTVerifier:
         has_trig = (str(str(symbolic_model)).find('sin') >= 0)  or (str(str(symbolic_model)).find('cos') >= 0)
         
         if has_trig:
+            self.delta = 0.01  # Default delta for dReal verification
             return 'dreal'
         else:
             return 'z3'  # Default to Z3 for simpler models
@@ -119,18 +120,24 @@ class SMTVerifier:
         
         result['details']['pde_residual'] = pde_residual
         
+        if self.delta:
+            delta = self.delta
+            logger.info(f"Using delta={delta} for validation")
+        else:
+            delta = 0
+
         # Determine which condition is violated based on epsilon
-        if boundary_diff is not None and boundary_diff > epsilon:
+        if boundary_diff is not None and boundary_diff > epsilon+delta:
             result['is_valid_ce'] = True
             result['violation_type'] = 'boundary'
             result['violation_amount'] = boundary_diff
-            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon}")
+            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon+delta}")
         
-        elif pde_residual > epsilon:
+        elif pde_residual > epsilon+delta:
             result['is_valid_ce'] = True
             result['violation_type'] = 'pde'
             result['violation_amount'] = pde_residual
-            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon}")
+            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon+delta}")
         
         else:
             boundary_info = f"Boundary diff: {boundary_diff:.6f}, " if boundary_diff is not None else ""
@@ -188,6 +195,7 @@ class SMTVerifier:
             if solver == 'dreal':
                 # Use dReal for verification
                 result = extract_dreal_partials(symbolic_model)
+                self.delta = min(epsilon / 10, 0.01)
                 success, counterexample = verify_with_dreal(
                     d_real_value_fn=result["d_real_value_fn"],
                     dreal_partials=result["dreal_partials"],
@@ -195,6 +203,7 @@ class SMTVerifier:
                     compute_hamiltonian=compute_hamiltonian,
                     compute_boundary=compute_boundary,
                     epsilon=epsilon,
+                    delta=self.delta,
                     reachMode=system_specifics.get('reachMode', 'forward'),
                     setType=system_specifics.get('setType', 'set'),
                     save_directory=system_specifics['root_path'],
@@ -203,7 +212,6 @@ class SMTVerifier:
                 )
             
                 # Convert counterexample to tensor format if found
-                ce_tensor = None
                 if not success and counterexample:
                     ce_list = []
                     for key in sorted(counterexample.keys()):

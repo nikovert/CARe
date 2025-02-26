@@ -19,7 +19,7 @@ class DoubleIntegratorLoss(HJILossFunction):
         self.input_min = input_bounds['min'].to(device)
         self.input_max = input_bounds['max'].to(device)
 
-    def compute_hamiltonian(self, x, p, Abs: Callable = torch.abs) -> torch.Tensor:
+    def compute_hamiltonian(self, x, p, Abs: Callable = abs) -> torch.Tensor:
         """Compute the Hamiltonian for the Double Integrator system."""
         using_torch = isinstance(p[0] if isinstance(p, (list, tuple)) else p[..., 0], torch.Tensor)
         

@@ -39,7 +39,7 @@ def parse_counterexample(result_str):
         return None
     return counterexample
 
-def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5,
+def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5, delta = 0.001,
                       reachMode='forward', setType='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
     """
     Verifies if the HJB equation holds using dReal for a double integrator system.
@@ -102,7 +102,6 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     
     result = None
     timing_info = {}
-    delta = min(epsilon / 10, 0.01)
     
     if execution_mode == "parallel":
         logger.info("Starting parallel constraint checks...")
