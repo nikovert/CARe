@@ -27,6 +27,7 @@ class SMTVerifier:
         """
         self.device = device
         self.solver_preference = solver_preference
+        self.delta = None
         
     def _select_solver(self, symbolic_model):
         """
@@ -176,80 +177,69 @@ class SMTVerifier:
         
         # Generate symbolic model
         t_symbolic_start = time.time()
-        try:
-            symbolic_model = extract_symbolic_model(model_state, model_config, system_specifics['root_path'])
-            timing_info['symbolic_time'] = time.time() - t_symbolic_start
-            logger.debug("Symbolic model extracted successfully")
-        except Exception as e:
-            logger.error("Failed to extract symbolic model: %s", str(e))
-            return False, None, {'error': 'symbolic_extraction_failed', 'time': time.time() - t_symbolic_start}
+        symbolic_model = extract_symbolic_model(model_state, model_config, system_specifics['root_path'])
+        timing_info['symbolic_time'] = time.time() - t_symbolic_start
+        logger.debug("Symbolic model extracted successfully")
         
         # Select solver
         solver = self._select_solver(symbolic_model)
         logger.info(f"Selected {solver} solver for verification")
         
-        try:
-            # Time verification setup and execution
-            t_verify_start = time.time()
-            
-            if solver == 'dreal':
-                # Use dReal for verification
-                result = extract_dreal_partials(symbolic_model)
-                self.delta = min(epsilon / 10, 0.01)
-                success, counterexample = verify_with_dreal(
-                    d_real_value_fn=result["d_real_value_fn"],
-                    dreal_partials=result["dreal_partials"],
-                    dreal_variables=result["dreal_variables"],
-                    compute_hamiltonian=compute_hamiltonian,
-                    compute_boundary=compute_boundary,
-                    epsilon=epsilon,
-                    delta=self.delta,
-                    reachMode=system_specifics.get('reachMode', 'forward'),
-                    setType=system_specifics.get('setType', 'set'),
-                    save_directory=system_specifics['root_path'],
-                    execution_mode="parallel",  # Use sequential for better timing info
-                    additional_constraints=system_specifics.get('additional_constraints', None)
-                )
-            
-                # Convert counterexample to tensor format if found
-                if not success and counterexample:
-                    ce_list = []
-                    for key in sorted(counterexample.keys()):
-                        if key.startswith('x_'):  # Only include state variables
-                            interval = counterexample[key]
-                            # Take midpoint of interval as the counterexample point
-                            ce_list.append((interval[0] + interval[1]) / 2)
-                    
-                    if ce_list:
-                        counterexample = torch.tensor(ce_list, device=self.device)
-                        logger.info(f"Counterexample found: {counterexample}")
-            else:
-                # Use Z3 for verification
-                result = extract_z3_partials(symbolic_model)
-                success, counterexample = verify_with_z3(
-                    z3_value_fn=result["z3_value_fn"],
-                    z3_partials=result["z3_partials"],
-                    z3_variables=result["z3_variables"],
-                    compute_hamiltonian=compute_hamiltonian,
-                    compute_boundary=compute_boundary,
-                    epsilon=epsilon,
-                    reachMode=system_specifics.get('reachMode', 'forward'),
-                    setType=system_specifics.get('setType', 'set'),
-                    save_directory=system_specifics['root_path'],
-                    additional_constraints=system_specifics.get('additional_constraints', None)
-                )
-                counterexample = torch.tensor(counterexample, device=self.device) if counterexample else None
+        # Time verification setup and execution
+        t_verify_start = time.time()
+        
+        if solver == 'dreal':
+            # Use dReal for verification
+            result = extract_dreal_partials(symbolic_model)
+            self.delta = min(epsilon / 10, 0.01)
+            success, counterexample = verify_with_dreal(
+                d_real_value_fn=result["d_real_value_fn"],
+                dreal_partials=result["dreal_partials"],
+                dreal_variables=result["dreal_variables"],
+                compute_hamiltonian=compute_hamiltonian,
+                compute_boundary=compute_boundary,
+                epsilon=epsilon,
+                delta=self.delta,
+                reachMode=system_specifics.get('reachMode', 'forward'),
+                setType=system_specifics.get('setType', 'set'),
+                save_directory=system_specifics['root_path'],
+                execution_mode="parallel",  # Use sequential for better timing info
+                additional_constraints=system_specifics.get('additional_constraints', None)
+            )
+        
+            # Convert counterexample to tensor format if found
+            if not success and counterexample:
+                ce_list = []
+                for key in sorted(counterexample.keys()):
+                    if key.startswith('x_'):  # Only include state variables
+                        interval = counterexample[key]
+                        # Take midpoint of interval as the counterexample point
+                        ce_list.append((interval[0] + interval[1]) / 2)
                 
-            timing_info['verification_time'] = time.time() - t_verify_start
+                if ce_list:
+                    counterexample = torch.tensor(ce_list, device=self.device)
+                    logger.info(f"Counterexample found: {counterexample}")
+        else:
+            # Use Z3 for verification
+            result = extract_z3_partials(symbolic_model)
+            success, counterexample = verify_with_z3(
+                z3_value_fn=result["z3_value_fn"],
+                z3_partials=result["z3_partials"],
+                z3_variables=result["z3_variables"],
+                compute_hamiltonian=compute_hamiltonian,
+                compute_boundary=compute_boundary,
+                epsilon=epsilon,
+                reachMode=system_specifics.get('reachMode', 'forward'),
+                setType=system_specifics.get('setType', 'set'),
+                save_directory=system_specifics['root_path'],
+                additional_constraints=system_specifics.get('additional_constraints', None)
+            )
+            counterexample = torch.tensor(counterexample, device=self.device) if counterexample else None
             
-            logger.info(f"Verification completed: {'successful' if success else 'failed'}")
-            logger.debug(f"Symbolic generation: {timing_info.get('symbolic_time', 0):.2f}s, " 
-                       f"Verification: {timing_info['verification_time']:.2f}s")
-            
-            return success, counterexample, timing_info
-            
-        except Exception as e:
-            logger.error("Verification failed with error: %s", str(e))
-            timing_info['verification_time'] = time.time() - t_verify_start
-            timing_info['error'] = str(e)
-            return False, None, timing_info
+        timing_info['verification_time'] = time.time() - t_verify_start
+        
+        logger.info(f"Verification completed: {'successful' if success else 'failed'}")
+        logger.debug(f"Symbolic generation: {timing_info.get('symbolic_time', 0):.2f}s, " 
+                    f"Verification: {timing_info['verification_time']:.2f}s")
+        
+        return success, counterexample, timing_info
