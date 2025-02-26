@@ -121,6 +121,14 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
                 current_output = current_output.applyfunc(lambda x: sine_transform(x, frequency))
             elif act_type == 'relu':
                 current_output = current_output.applyfunc(lambda x: sympy.Max(0, x))
+            elif act_type == 'gelu':
+                # Approximate GELU symbolically using its definition
+                # GELU(x) ≈ 0.5x(1 + tanh(sqrt(2/π)(x + 0.044715x^3)))
+                current_output = current_output.applyfunc(
+                    lambda x: 0.5 * x * (1 + sympy.tanh(
+                        sympy.sqrt(2/sympy.pi) * (x + 0.044715 * x**3)
+                    ))
+                )
 
     logger.info(f"Successfully generated symbolic output for layer {layer_number}")
     return current_output
@@ -146,7 +154,7 @@ def parallel_substitution_task(args):
     # Using xreplace here for fast, dictionary-based substitution
     return expr.xreplace(substitution_map)
 
-def combine_all_layers_parallelized(state_dict, config, simplify=True):
+def combine_all_layers_parallelized(state_dict, config, simplify=False):
     """
     Combine all layers using state dict directly.
 
@@ -205,8 +213,6 @@ def combine_all_layers_parallelized(state_dict, config, simplify=True):
         if simplify:
             combined_symbolic_model = sympy.simplify(combined_symbolic_model)
 
-        logger.debug(f"Layer {layer_number} combined. Total layers combined so far: {layer_number}.")
-
     logger.info(f"All {num_layers} layers combined successfully.")
     return combined_symbolic_model
 
@@ -225,9 +231,7 @@ def extract_symbolic_model(state_dict: Dict[str, torch.Tensor], config: Dict[str
     logger.info("Starting symbolic model extraction")
     
     # Get and save symbolic expression
-    symbolic_expression = combine_all_layers_parallelized(
-        state_dict, config, simplify=True
-    )
+    symbolic_expression = combine_all_layers_parallelized(state_dict, config)
 
     symbolic_file = os.path.join(save_path, "symbolic_model.txt")
     try:

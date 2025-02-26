@@ -1,11 +1,10 @@
 import numpy as np
 from scipy.io import loadmat
 import torch
-from typing import Dict, Tuple, Any
+from typing import Dict, Tuple
 import matplotlib
 matplotlib.use('Agg')  # Add this before other matplotlib imports
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 
 def construct_grid(grid_min: np.ndarray, grid_max: np.ndarray, N: np.ndarray, time_points: np.ndarray = None) -> np.ndarray:
     """

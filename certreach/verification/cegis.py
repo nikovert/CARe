@@ -4,7 +4,7 @@ import logging
 import torch
 from typing import Optional, List
 from dataclasses import dataclass
-from certreach.verification.verify import verify_system
+from certreach.verification.SMT_verifier import SMTVerifier
 from certreach.common.dataset import ReachabilityDataset
 from certreach.learning.training import train
 
@@ -33,7 +33,6 @@ class CEGISLoop:
         self.example = example
         self.args = args # To pass on arguments to training and dataset creation
         self.device = torch.device(args.device)
-        example.model = example.model.to(self.device)  # Ensure model is on correct device
         self.max_iterations = args.max_iterations
         self.current_epsilon = args.epsilon
         self.best_epsilon = float('inf')
@@ -44,6 +43,11 @@ class CEGISLoop:
         self.min_epsilon = args.min_epsilon
         self.pruning_percentage = getattr(args, 'pruning_percentage', 0.25)  # Default threshold if not specified
         self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
+        
+        # Initialize verifier - use the specified solver preference if available
+        solver_preference = getattr(args, 'solver', 'auto')
+        self.verifier = SMTVerifier(device=self.device, solver_preference=solver_preference)
+
         self.initial_lr = args.lr
         self.fine_tune_lr = args.lr * 0.1  # Lower learning rate for fine-tuning
         self.fine_tune_epochs = args.num_epochs // 4  # Fewer epochs for fine-tuning
@@ -128,7 +132,10 @@ class CEGISLoop:
             # Update system_specifics with current root_path before verification
             system_specifics = {
                 'name': self.example.Name,
-                'root_path': self.example.root_path
+                'root_path': self.example.root_path,
+                'reachMode': getattr(self.example, 'reachMode', 'forward'),
+                'setType': getattr(self.example, 'setType', 'set'),
+                'additional_constraints': getattr(self.example, 'additional_constraints', None)
             }
             
             # Extract model state and config, keeping tensors on CPU for verification
@@ -136,19 +143,14 @@ class CEGISLoop:
                 model_state = {k: v.cpu() for k, v in self.example.model.state_dict().items()}
             
             # Get verification result and timing info
-            verification_result, timing_info, symbolic_model = verify_system(
+            success, counterexample, timing_info = self.verifier.verify_system(
                 model_state=model_state,
                 model_config=model_config,
                 system_specifics=system_specifics,  # Use updated system_specifics
                 compute_hamiltonian=self.example.hamiltonian_fn,
                 compute_boundary=self.example.boundary_fn,
-                epsilon=self.current_epsilon,
-                symbolic_model=self.current_symbolic_model
+                epsilon=self.current_epsilon
             )
-            
-            # Store symbolic model for potential reuse
-            self.current_symbolic_model = symbolic_model
-            
             # Store timing information
             self.timing_history.append(TimingStats(
                 training_time=getattr(self, 'last_training_time', 0.0),
@@ -156,7 +158,7 @@ class CEGISLoop:
                 verification_time=timing_info['verification_time']
             ))
             
-            if verification_result["result"] == "HJB Equation Satisfied":
+            if success:
                 # Verification succeeded, try smaller epsilon
                 with torch.no_grad():  # No gradients needed for model state saving
                     if self.current_epsilon < self.best_epsilon:
@@ -176,16 +178,15 @@ class CEGISLoop:
                     self.current_epsilon = max(self.current_epsilon, self.min_epsilon)
                     self.args.epsilon = self.current_epsilon
             else:
+
+                validation_results = self.verifier.validate_counterexample(counterexample=counterexample, 
+                                    loss_fn=self.example.loss_fn,
+                                    compute_boundary=self.example.boundary_fn,
+                                    epsilon=self.current_epsilon,
+                                    model=self.example.model)
+                
                 # Train on counterexample
                 self.current_epsilon *= 1.05  # Increase epsilon by 5%
-
-                # Convert dictionary counterexample to tensor format
-                ce_list = []
-                for key in sorted(verification_result["counterexample"].keys()):
-                    interval = verification_result["counterexample"][key]
-                    # Take midpoint of interval as the counterexample point
-                    ce_list.append((interval[0] + interval[1]) / 2)
-                counterexample = torch.tensor(ce_list, device=self.device)
 
                 # Create a subdirectory for this counterexample iteration inside the checkpoint directory
                 counter_dir = os.path.join(base_dir, f"iteration_{iteration_count+1}")

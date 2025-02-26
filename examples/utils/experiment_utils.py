@@ -32,10 +32,13 @@ def get_experiment_folder(logging_root, experiment_name):
     prev_folder = numbered_folders[0][1]
     if prev_folder:
         prev_folder_path = os.path.join(logging_root, prev_folder)
-        iteration_folders = [f for f in os.listdir(prev_folder_path) if f.startswith("iteration")]
-        iteration_folders = find_numbered_folder(iteration_folders)
+        iteration_folders = [f for f in os.listdir(prev_folder_path) if f.startswith("iteration") or f.startswith("initial")]
         if iteration_folders:
-            prev_folder_path = os.path.join(prev_folder_path, iteration_folders[0][1])
+            if len(iteration_folders) > 1:
+                iteration_folders = find_numbered_folder(iteration_folders)
+                prev_folder_path = os.path.join(prev_folder_path, iteration_folders[0][1])
+            else:
+                prev_folder_path = os.path.join(prev_folder_path, iteration_folders[0])
     else:
         prev_folder_path = None
 

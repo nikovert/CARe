@@ -8,16 +8,10 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from certreach.common.dataset import ReachabilityDataset
 from certreach.learning.training import train
-from certreach.learning.networks import SingleBVPNet
-from certreach.verification.symbolic import extract_symbolic_model
-from certreach.verification.dreal_utils import (
-    extract_dreal_partials,
-    process_dreal_result
-)
-from certreach.verification.verify import verify_system
+from certreach.learning.networks import SingleBVPNet, NetworkConfig
 from certreach.common.matlab_loader import load_matlab_data, compare_with_nn
+from certreach.common.dataset import ReachabilityDataset
 
 from .verification import dreal_multi_vehicle_BRS
 from .loss import initialize_loss

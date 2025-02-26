@@ -3,7 +3,7 @@ from collections import OrderedDict
 import math
 from pathlib import Path
 from dataclasses import dataclass, fields
-from typing import Optional, Literal, Dict, Any, Union, Tuple
+from typing import Optional, Literal, Dict, Any, Union, Tuple, List
 from ray import tune
 import torch.nn.init as init
 
@@ -14,7 +14,7 @@ class NetworkConfig:
     out_features: int = 1
     hidden_features: Union[int, tune.grid_search, tune.choice] = 32
     num_hidden_layers: Union[int, tune.grid_search, tune.choice] = 3
-    activation_type: Union[Literal['sine', 'relu', 'sigmoid', 'tanh', 'selu', 'softplus', 'elu'], 
+    activation_type: Union[Literal['sine', 'relu', 'sigmoid', 'tanh', 'selu', 'softplus', 'elu', 'gelu'], 
                          tune.grid_search, tune.choice] = 'sine'
     mode: str = 'mlp'
     use_polynomial: Union[bool, tune.grid_search, tune.choice] = False
@@ -49,7 +49,7 @@ class NetworkConfig:
         return {
             "hidden_features": tune.choice([16, 32, 64, 128]),
             "num_hidden_layers": tune.choice([2, 3, 4, 5]),
-            "activation_type": tune.choice(['sine', 'relu', 'tanh']),
+            "activation_type": tune.choice(['sine', 'relu', 'gelu']),
             "use_polynomial": tune.choice([True, False]),
             "poly_degree": tune.choice([2, 3]),
             "initialization_scale": tune.loguniform(0.1, 10.0),
@@ -228,6 +228,11 @@ ACTIVATION_CONFIGS: Dict[str, Tuple[torch.nn.Module, callable, Optional[callable
         torch.nn.Softplus(),
         lambda w: init.kaiming_normal_(w, nonlinearity='relu'),
         None
+    ),
+    'gelu': (
+        torch.nn.GELU(),
+        lambda w: init.normal_(w, std=1/math.sqrt(w.size(1))),  # Initialize using He initialization
+        None
     )
 }
 
@@ -381,90 +386,83 @@ class SingleBVPNet(torch.nn.Module):
             
         torch.save(checkpoint, path)
 
-    @staticmethod
-    def load_checkpoint(path, device='cpu', eval_mode=True):
-        """ 
-        Load model checkpoint with proper evaluation mode setting
+    def load_checkpoint(self, path, device=None, strict=False):
+        """
+        Load checkpoint into the current model instance
         
         Args:
-            path (str): Path to checkpoint file
-            device (str): Device to load model to ('cpu' or 'cuda')
-            eval_mode (bool): Whether to set model to evaluation mode
-            
+            path (str or Path): Path to the checkpoint file
+            device (str or torch.device, optional): Device to load the model to.
+                                                   If None, uses the current model's device
+            strict (bool): Whether to strictly enforce that the keys in state_dict match
+                         the keys returned by this module's state_dict() function
+                
         Returns:
-            tuple: (model, checkpoint_dict)
+            dict: Additional data stored in the checkpoint
         """
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"Checkpoint file not found: {path}")
+            
+        # Use current device if not specified
+        if device is None:
+            device = self.device
+            
         try:
             checkpoint = torch.load(path, map_location=device)
             
-            # Set default configuration
-            default_config = {
-                'mode': 'mlp',
-                'activation_type': 'sine',
-                'use_polynomial': True,
-                'poly_degree': 2
-            }
-            
-            if 'model_config' not in checkpoint:
-                # Infer configuration from state dict
+            # Load model state dict
+            if 'model_state_dict' in checkpoint:
+                # Check if state dict contains mask buffers (from pruned model)
                 state_dict = checkpoint['model_state_dict']
-                # Filter out mask buffers for configuration inference
-                state_dict = {k: v for k, v in state_dict.items() if not k.startswith('mask_')}
-                input_layer = next(key for key in state_dict.keys() if 'net.0.0.weight' in key)
-                output_layer = next(key for key in state_dict.keys() if key.endswith('.weight'))
-                in_features = state_dict[input_layer].shape[1]
-                out_features = state_dict[output_layer].shape[0]
-                hidden_features = state_dict[input_layer].shape[0]
-                # Count hidden layers by counting unique layer indices in state dict
-                layer_indices = set()
-                for key in state_dict.keys():
-                    if '.weight' in key:
-                        layer_idx = int(key.split('.')[1])
-                        layer_indices.add(layer_idx)
-                num_hidden_layers = len(layer_indices) - 2  # subtract input and output layers
-                model_config = {
-                    **default_config,
-                    'in_features': in_features,
-                    'out_features': out_features,
-                    'hidden_features': hidden_features,
-                    'num_hidden_layers': max(0, num_hidden_layers)
-                }
-            else:
-                model_config = {**default_config, **checkpoint['model_config']}
-            
-            # Create and configure model
-            model = SingleBVPNet(**model_config)
-            model.to(device)
-            
-            # Load state dict and handle masks
-            state_dict = checkpoint['model_state_dict']
-            
-            # Separate masks from other state dict entries
-            mask_dict = {k: v for k, v in state_dict.items() if k.startswith('mask_')}
-            model_dict = {k: v for k, v in state_dict.items() if not k.startswith('mask_')}
-            
-            # First load the model weights
-            model.load_state_dict(model_dict, strict=True)
-            
-            # Then register and load masks if present
-            if mask_dict:
-                model._is_pruned = True
-                for mask_name, mask_tensor in mask_dict.items():
-                    model.register_buffer(mask_name, mask_tensor)
-                    # Apply mask to corresponding weight
-                    param_name = mask_name.replace('mask_', '').replace('_', '.')
-                    if hasattr(model, param_name):
-                        param = getattr(model, param_name)
-                        param.data *= mask_tensor
-            
-            if eval_mode:
-                model.eval()
+                mask_keys = [key for key in state_dict.keys() if key.startswith('mask_')]
                 
-            return model, checkpoint
+                if mask_keys:
+                    # Model was pruned, register the mask buffers first
+                    for key in mask_keys:
+                        # Extract parameter name from mask name
+                        param_name = key.replace('mask_', '').replace('_', '.')
+                        # Register buffer with the mask
+                        buffer_name = self._get_valid_buffer_name(param_name)
+                        self.register_buffer(buffer_name, state_dict[key])
+                    self._is_pruned = True
+                
+                try:
+                    # Try to load with strict=True first
+                    self.load_state_dict(state_dict, strict=True)
+                except RuntimeError as e:
+                    if not strict:
+                        # If strict=False, try to load with strict=False
+                        missing_keys, unexpected_keys = [], []
+                        # Filter out mask keys from unexpected keys for better error messages
+                        for key in state_dict:
+                            if key.startswith('mask_') and key not in dict(self.named_buffers()):
+                                missing_keys.append(key)
+                        
+                        # Load only the keys that match
+                        model_dict = self.state_dict()
+                        filtered_state_dict = {k: v for k, v in state_dict.items() 
+                                             if k in model_dict}
+                        model_dict.update(filtered_state_dict)
+                        self.load_state_dict(model_dict)
+                        
+                        # Log warning about mismatched keys
+                        if missing_keys or unexpected_keys:
+                            print(f"Warning: Non-strict loading - "
+                                  f"missing keys: {missing_keys}, unexpected keys: {unexpected_keys}")
+                    else:
+                        # If strict=True, re-raise the original error
+                        raise
+            else:
+                raise KeyError("Checkpoint does not contain model_state_dict")
             
+            # Return any additional data from the checkpoint
+            return {k: v for k, v in checkpoint.items() 
+                   if k not in ['model_state_dict', 'model_config']}
+                   
         except Exception as e:
-            raise RuntimeError(f"Failed to load checkpoint: {str(e)}")
-            
+            raise RuntimeError(f"Error loading checkpoint from {path}: {str(e)}")
+
     def load_weights(self, state_dict, eval_mode=True):
         """ 
         Load just the model weights
@@ -627,4 +625,3 @@ class SingleBVPNet(torch.nn.Module):
             print("-" * 50)
             total_params += param.numel()
         print(f"Total Parameters: {total_params}")
-

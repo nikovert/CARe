@@ -1,16 +1,13 @@
 import torch
 import torch.nn.functional as F
-from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 import time
 import numpy as np
 from pathlib import Path
-import shutil
 import logging
-from typing import Callable, Optional, Dict
+from typing import Callable, Optional
 from .curriculum import Curriculum
 from ..common.dataset import ReachabilityDataset
-import gc
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +167,6 @@ def train(model: torch.nn.Module,
                 if validation_fn is not None:
                     validation_fn(model, checkpoints_dir, epoch, tmax=tmax)
 
-                gc.collect()
                 if device.type == 'cuda':
                     torch.cuda.empty_cache()
 
@@ -270,7 +266,7 @@ def train(model: torch.nn.Module,
         try:
             best_model_path = Path(model_dir) / 'checkpoints' / 'model_best_finetuned.pth'
             if best_model_path.exists():
-                model, checkpoint = model.load_checkpoint(best_model_path)
+                model.load_checkpoint(best_model_path)
                 logger.info("Loaded best fine-tuned model")
         except Exception as e:
             logger.warning(f"Could not load best fine-tuned model: {e}")
