@@ -21,7 +21,7 @@ def parse_counterexample(model: z3.Model):
     """
     Parse the counterexample from a Z3 model.
     """
-    counterexample = [float(model[d].as_long()) for d in model.decls()]
+    counterexample = [float(model[d].as_decimal(10)) for d in model.decls()]
     return counterexample
 
 def verify_with_z3(z3_value_fn, z3_partials, z3_variables, compute_hamiltonian, compute_boundary, epsilon=0.5,

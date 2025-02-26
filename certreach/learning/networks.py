@@ -386,7 +386,7 @@ class SingleBVPNet(torch.nn.Module):
             
         torch.save(checkpoint, path)
 
-    def load_checkpoint(self, path, device=None):
+    def load_checkpoint(self, path, device=None, strict=False):
         """
         Load checkpoint into the current model instance
         
@@ -394,6 +394,8 @@ class SingleBVPNet(torch.nn.Module):
             path (str or Path): Path to the checkpoint file
             device (str or torch.device, optional): Device to load the model to.
                                                    If None, uses the current model's device
+            strict (bool): Whether to strictly enforce that the keys in state_dict match
+                         the keys returned by this module's state_dict() function
                 
         Returns:
             dict: Additional data stored in the checkpoint
@@ -411,7 +413,46 @@ class SingleBVPNet(torch.nn.Module):
             
             # Load model state dict
             if 'model_state_dict' in checkpoint:
-                self.load_state_dict(checkpoint['model_state_dict'], strict=True)
+                # Check if state dict contains mask buffers (from pruned model)
+                state_dict = checkpoint['model_state_dict']
+                mask_keys = [key for key in state_dict.keys() if key.startswith('mask_')]
+                
+                if mask_keys:
+                    # Model was pruned, register the mask buffers first
+                    for key in mask_keys:
+                        # Extract parameter name from mask name
+                        param_name = key.replace('mask_', '').replace('_', '.')
+                        # Register buffer with the mask
+                        buffer_name = self._get_valid_buffer_name(param_name)
+                        self.register_buffer(buffer_name, state_dict[key])
+                    self._is_pruned = True
+                
+                try:
+                    # Try to load with strict=True first
+                    self.load_state_dict(state_dict, strict=True)
+                except RuntimeError as e:
+                    if not strict:
+                        # If strict=False, try to load with strict=False
+                        missing_keys, unexpected_keys = [], []
+                        # Filter out mask keys from unexpected keys for better error messages
+                        for key in state_dict:
+                            if key.startswith('mask_') and key not in dict(self.named_buffers()):
+                                missing_keys.append(key)
+                        
+                        # Load only the keys that match
+                        model_dict = self.state_dict()
+                        filtered_state_dict = {k: v for k, v in state_dict.items() 
+                                             if k in model_dict}
+                        model_dict.update(filtered_state_dict)
+                        self.load_state_dict(model_dict)
+                        
+                        # Log warning about mismatched keys
+                        if missing_keys or unexpected_keys:
+                            print(f"Warning: Non-strict loading - "
+                                  f"missing keys: {missing_keys}, unexpected keys: {unexpected_keys}")
+                    else:
+                        # If strict=True, re-raise the original error
+                        raise
             else:
                 raise KeyError("Checkpoint does not contain model_state_dict")
             

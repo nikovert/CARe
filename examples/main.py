@@ -40,7 +40,7 @@ def parse_args():
                   help='Number of epochs between model checkpoints')
 
     # Model Settings
-    p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'relu'],
+    p.add_argument('--model_type', type=str, default='relu', choices=['sine', 'relu'],
                   help='Activation function for the neural network')
     p.add_argument('--in_features', type=int, default=3,
                   help='Number of input features for the network')
@@ -117,16 +117,6 @@ def cleanup():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-def load_model_safely(example, model_path):
-    """Helper function to safely load model"""
-    try:
-        # Explicitly move model to device after loading
-        example.model.load_checkpoint(model_path, example.device)
-        return True
-    except Exception as e:
-        logger.error(f"Failed to load model: {str(e)}")
-        return False
-
 def try_load_model_from_folder(example, folder_path):
     """Try to load a model from a given folder path."""
     checkpoint_dir = os.path.join(folder_path, 'checkpoints')
@@ -134,9 +124,12 @@ def try_load_model_from_folder(example, folder_path):
         for model_file in ['model_final.pth', 'model_current.pth']:
             model_path = os.path.join(checkpoint_dir, model_file)
             if os.path.exists(model_path):
-                if load_model_safely(example, model_path):
+                try:
+                    example.model.load_checkpoint(model_path, example.device)
                     logger.info(f"Loaded model from {model_path}")
                     return True
+                except Exception as e:
+                    continue
     return False
 
 def main():
