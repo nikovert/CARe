@@ -5,11 +5,11 @@ A Python package for certified Hamilton-Jacobi reachability analysis.
 ## Prerequisites
 
 - Python 3.9
-- dReal (SMT solver)
+- dReal or Z3 (SMT solver)
 
 ## Installing dReal
 
-This package requires dReal SMT solver. Please follow the installation instructions on the [dReal repository](https://github.com/dreal/dreal4).
+This package requires dReal SMT solver if using sine activation functions. Please follow the installation instructions on the [dReal repository](https://github.com/dreal/dreal4).
 
 ## Installation
 
