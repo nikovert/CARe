@@ -3,7 +3,7 @@ from collections import OrderedDict
 import math
 from pathlib import Path
 from dataclasses import dataclass, fields
-from typing import Optional, Literal, Dict, Any, Union, Tuple
+from typing import Optional, Literal, Dict, Any, Union, Tuple, List
 from ray import tune
 import torch.nn.init as init
 
@@ -625,4 +625,3 @@ class SingleBVPNet(torch.nn.Module):
             print("-" * 50)
             total_params += param.numel()
         print(f"Total Parameters: {total_params}")
-

@@ -13,6 +13,15 @@ def suppress_matplotlib_logging():
     logging.getLogger('matplotlib.backends').setLevel(logging.WARNING)
     logging.getLogger('matplotlib.ticker').setLevel(logging.WARNING)
 
+def suppress_onnx_logging():
+    """
+    Suppress all logging from ONNX by setting its logger level to WARNING.
+    This prevents ONNX's debug and info messages from appearing.
+    """
+    logging.getLogger('onnx').setLevel(logging.WARNING)
+    logging.getLogger('onnxruntime').setLevel(logging.WARNING)
+    logging.getLogger('onnxscript').setLevel(logging.WARNING)
+
 def configure_logging(log_file=None, log_level=logging.INFO):
     """
     Configure the logging system using the hierarchical logging approach.
@@ -53,3 +62,6 @@ def configure_logging(log_file=None, log_level=logging.INFO):
     
     # Suppress matplotlib logging
     suppress_matplotlib_logging()
+
+    # Suppress ONNX logging
+    suppress_onnx_logging()

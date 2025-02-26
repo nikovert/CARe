@@ -43,6 +43,8 @@
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
                 "--num_epochs", "10",
+                "--num_nl", "8",
+                "--num_hl", "0",
                 "--max_iterations", "3",
                 "--batch_size", "16"
             ],
