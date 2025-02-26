@@ -32,7 +32,7 @@ class DoubleIntegrator(DynamicalSystem):
     """Double Integrator system for reachability analysis."""
     
     Name = "double_integrator"
-    DEFAULT_MATLAB_FILE = "data/value_function.mat"
+    DEFAULT_MATLAB_FILE = "data/double_integrator.mat"
     NUM_STATES = 2
 
     def __init__(self, args):

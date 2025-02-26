@@ -5,7 +5,7 @@ from examples.log import configure_logging
 import torch
 from certreach.verification.cegis import CEGISLoop
 from examples.factories import create_example, EXAMPLE_NAMES
-from examples.utils.experiment_utils import get_experiment_folder, setup_experiment_folder
+from examples.experiment_utils import get_experiment_folder, setup_experiment_folder
 import numpy as np
 import random   
 import json
