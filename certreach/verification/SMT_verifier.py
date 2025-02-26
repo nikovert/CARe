@@ -1,6 +1,7 @@
 import time
 import logging
 import torch
+import numpy as np
 from typing import Dict, Any, Tuple, Callable, List, Optional, Union
 from certreach.verification.verifier_utils.symbolic import extract_symbolic_model
 from certreach.verification.verifier_utils.dreal_utils import (
@@ -50,6 +51,95 @@ class SMTVerifier:
             return 'dreal'
         else:
             return 'z3'  # Default to Z3 for simpler models
+
+    def validate_counterexample(
+        self,
+        counterexample: torch.Tensor,
+        loss_fn: Callable,
+        compute_boundary: Callable,
+        epsilon: float,
+        model: torch.nn.Module
+    ) -> Dict[str, Any]:
+        """
+        Validate if a counterexample actually violates the HJ PDE or boundary conditions.
+        
+        Args:
+            counterexample: Tensor representing the counterexample point
+            compute_hamiltonian: Function to compute the Hamiltonian
+            compute_boundary: Function to compute boundary conditions
+            epsilon: Verification tolerance
+            system_specifics: System-specific information
+            model: Pre-loaded model instance (optional). If provided, 
+                   model_state and model_config are ignored.
+            
+        Returns:
+            Dict[str, Any]: Validation results including violation details
+        """
+        logger.info(f"Validating counterexample: {counterexample.cpu().numpy()}")
+        
+        # Initialize validation result
+        result = {
+            'is_valid_ce': False,
+            'violation_type': None,
+            'violation_amount': 0.0,
+            'details': {},
+            'counterexample': counterexample.cpu().numpy()
+        }
+        
+        model.eval()
+        
+        # Ensure counterexample is on the correct device
+        if counterexample.device != self.device:
+            counterexample = counterexample.to(self.device)
+        
+        # Convert counterexample to required format for model input and ensure it requires gradients
+        ce_coords = counterexample.clone().detach().requires_grad_(True).unsqueeze(0)
+        ce_input = {'coords': ce_coords}
+        ce_states = counterexample[1:].unsqueeze(0)
+        
+        # Get model output
+        model_out = model(ce_input)
+        output = model_out['model_out']
+        
+        # Compute boundary condition value and violation
+        boundary_value = None
+        model_value = None
+        boundary_diff = None
+        
+        if counterexample[0] == 0.0:  # Initial condition
+            boundary_value = compute_boundary(ce_states)
+            model_value = output.item()
+            boundary_diff = abs(model_value - boundary_value).item()
+            
+            result['details']['boundary_value'] = boundary_value
+            result['details']['model_value'] = model_value
+            result['details']['boundary_diff'] = boundary_diff
+        
+        loss = loss_fn(model_out)  # Compute loss to get gradients
+        pde_residual = loss['diff_constraint_hom'].item()
+        
+        result['details']['pde_residual'] = pde_residual
+        
+        # Determine which condition is violated based on epsilon
+        if boundary_diff is not None and boundary_diff > epsilon:
+            result['is_valid_ce'] = True
+            result['violation_type'] = 'boundary'
+            result['violation_amount'] = boundary_diff
+            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon}")
+        
+        elif pde_residual > epsilon:
+            result['is_valid_ce'] = True
+            result['violation_type'] = 'pde'
+            result['violation_amount'] = pde_residual
+            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon}")
+        
+        else:
+            boundary_info = f"Boundary diff: {boundary_diff:.6f}, " if boundary_diff is not None else ""
+            logger.warning(f"Invalid counterexample: No violation exceeds epsilon={epsilon}")
+            logger.warning(f"{boundary_info}PDE residual: {pde_residual:.6f}")
+        
+        # Return detailed validation results
+        return result
 
     def verify_system(
         self,

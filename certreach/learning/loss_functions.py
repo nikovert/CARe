@@ -11,29 +11,27 @@ class HJILossFunction(ABC):
         self.reachAim = reachAim
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    def compute_loss(self, model_output, gt):
+    def compute_loss(self, model_output, gt = None):
         """Template method that implements the common loss computation pattern."""
-        source_boundary_values = gt['source_boundary_values']
-        x = model_output['model_in']
-        y = model_output['model_out']
-        dirichlet_mask = gt['dirichlet_mask']
-
-        # Ensure tensors are on the correct device
-        source_boundary_values = source_boundary_values.to(self.device)
-        x = x.to(self.device)
-        y = y.to(self.device)
-        dirichlet_mask = dirichlet_mask.to(self.device)
+        x = model_output['model_in'].to(self.device)
+        y = model_output['model_out'].to(self.device)
+        if gt:
+            source_boundary_values = gt['source_boundary_values'].to(self.device)
+            dirichlet_mask = gt['dirichlet_mask'].to(self.device)
 
         du, _ = operators.jacobian(y, x)
         dudt = du[..., 0, 0]
         dudx = du[..., 0, 1:]
-        t = x[..., 0]
         states = x[...,1:]
 
         ham = self.compute_hamiltonian(states, dudx)
         ham = self._apply_reachability_logic(ham)
         ham = self._apply_minimization_constraint(ham)
 
+        if not gt:
+            diff_constraint_hom = dudt + ham
+            return {'diff_constraint_hom': torch.abs(diff_constraint_hom).sum()}
+        
         if torch.all(dirichlet_mask):
             diff_constraint_hom = torch.Tensor([0])
         else:

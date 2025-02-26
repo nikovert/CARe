@@ -416,10 +416,8 @@ class SingleBVPNet(torch.nn.Module):
                 raise KeyError("Checkpoint does not contain model_state_dict")
                 
             # Separate masks from other state dict entries
-            mask_dict = {k: v for k, v in self.state_dict.items() if k.startswith('mask_')}
-            
-            # Then register and load masks if present
-            if mask_dict:
+            if 'mask_state_dict' in checkpoint:
+                mask_dict = {k: v for k, v in self.state_dict.items() if k.startswith('mask_')}
                 self._is_pruned = True
                 for mask_name, mask_tensor in mask_dict.items():
                     self.register_buffer(mask_name, mask_tensor)

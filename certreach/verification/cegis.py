@@ -178,6 +178,13 @@ class CEGISLoop:
                     self.current_epsilon = max(self.current_epsilon, self.min_epsilon)
                     self.args.epsilon = self.current_epsilon
             else:
+
+                validation_results = self.verifier.validate_counterexample(counterexample=counterexample, 
+                                    loss_fn=self.example.loss_fn,
+                                    compute_boundary=self.example.boundary_fn,
+                                    epsilon=self.current_epsilon,
+                                    model=self.example.model)
+                
                 # Train on counterexample
                 self.current_epsilon *= 1.05  # Increase epsilon by 5%
 

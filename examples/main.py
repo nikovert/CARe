@@ -42,8 +42,6 @@ def parse_args():
     # Model Settings
     p.add_argument('--model_type', type=str, default='relu', choices=['sine', 'relu'],
                   help='Activation function for the neural network')
-    p.add_argument('--model_mode', type=str, default='mlp', choices=['mlp'],
-                  help='Type of neural network architecture')
     p.add_argument('--in_features', type=int, default=3,
                   help='Number of input features for the network')
     p.add_argument('--out_features', type=int, default=1,

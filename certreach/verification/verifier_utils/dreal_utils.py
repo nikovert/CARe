@@ -14,8 +14,6 @@ def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[d
     """Helper function to check a single constraint."""
     logger.debug(f"Starting constraint check with precision {precision}")
     result = CheckSatisfiability(constraint, precision)
-    if result is not None:
-        logger.info(f"Constraint check completed. Found counterexample: {result}")
     return result
 
 def parse_counterexample(result_str):
