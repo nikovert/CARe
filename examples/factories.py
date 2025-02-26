@@ -31,23 +31,18 @@ def discover_examples():
         return
 
     # Iterate through all subdirectories in systems
-    for system_dir in systems_dir.iterdir():
-        if not system_dir.is_dir():
+    for system_file in systems_dir.iterdir():
+        if system_file.is_dir():
             continue
-
-        # Look for a Python file with the same name as the directory
-        main_file = system_dir / f"{system_dir.name}.py"
-        if main_file.exists():
-            # Convert path to module path
-            relative_path = main_file.relative_to(Path(__file__).parent.parent)
-            module_path = str(relative_path).replace('/', '.').replace('.py', '')
+        relative_path = system_file.relative_to(Path(__file__).parent.parent)
+        module_path = str(relative_path).replace('/', '.').replace('.py', '')
             
-            try:
-                # Import the module to trigger the register_example decorator
-                importlib.import_module(module_path)
-                logger.debug(f"Successfully loaded example system from {module_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load example system from {module_path}: {e}")
+        try:
+            # Import the module to trigger the register_example decorator
+            importlib.import_module(module_path)
+            logger.debug(f"Successfully loaded example system from {module_path}")
+        except Exception as e:
+            logger.warning(f"Failed to load example system from {module_path}: {e}")
 
 # Discover examples when the module is imported
 discover_examples()

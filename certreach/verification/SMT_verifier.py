@@ -11,10 +11,6 @@ from certreach.verification.verifier_utils.z3_utils import (
     extract_z3_partials,
     verify_with_z3
 )
-from certreach.verification.verifier_utils.marabou_utils import (
-    extract_marabou_network,
-    verify_with_marabou
-)
 
 logger = logging.getLogger(__name__)
 

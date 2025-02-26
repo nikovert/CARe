@@ -1,23 +1,58 @@
-from abc import ABC, abstractmethod
 import torch
 from ..common import operators
+from typing import Callable, Dict, Any, Optional
 
-class HJILossFunction(ABC):
-    """Base class for Hamilton-Jacobi-Isaacs loss functions."""
+class HJILossFunction:
+    """
+    Loss function for Hamilton-Jacobi-Isaacs PDEs used in reachability analysis.
+    """
     
-    def __init__(self, minWith='none', reachMode='backward', reachAim='reach'):
+    def __init__(
+        self, 
+        hamiltonian_fn: Optional[Callable] = None,
+        minWith: str = 'none',
+        reachMode: str = 'backward',
+        reachAim: str = 'reach'
+    ):
+        """
+        Initialize the HJI Loss Function.
+        
+        Args:
+            hamiltonian_fn: Function to compute the Hamiltonian
+            minWith: Type of min operation to use ('none', 'zero', or 'target')
+            reachMode: Direction of reachability analysis ('backward' or 'forward')
+            reachAim: Aim of reachability analysis ('reach' or 'avoid')
+        """
         self.minWith = minWith
         self.reachMode = reachMode
         self.reachAim = reachAim
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+        self._hamiltonian_fn = hamiltonian_fn
+    
+    def compute_hamiltonian(self, x, p, Abs: Callable = abs) -> torch.Tensor:
+        """
+        Compute the Hamiltonian for the system.
+        
+        Args:
+            x: State variables
+            p: Costate variables
+            
+        Returns:
+            Hamiltonian value
+        """
+        if self._hamiltonian_fn is None:
+            raise NotImplementedError(
+                "No Hamiltonian function provided. Either pass a hamiltonian_fn to the constructor "
+                "or override this method in a subclass."
+            )
+        return self._hamiltonian_fn(x, p, Abs)
+    
     def compute_loss(self, model_output, gt = None):
         """Template method that implements the common loss computation pattern."""
-        x = model_output['model_in'].to(self.device)
-        y = model_output['model_out'].to(self.device)
+        x = model_output['model_in']
+        y = model_output['model_out']
         if gt:
-            source_boundary_values = gt['source_boundary_values'].to(self.device)
-            dirichlet_mask = gt['dirichlet_mask'].to(self.device)
+            source_boundary_values = gt['source_boundary_values']
+            dirichlet_mask = gt['dirichlet_mask']
 
         du, _ = operators.jacobian(y, x)
         dudt = du[..., 0, 0]
@@ -58,8 +93,3 @@ class HJILossFunction(ABC):
         if self.reachMode == 'backward':
             ham = -ham
         return ham
-
-    @abstractmethod
-    def compute_hamiltonian(self, x, dudx):
-        """Compute the Hamiltonian. Must be implemented by subclasses."""
-        pass

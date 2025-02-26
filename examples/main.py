@@ -40,7 +40,7 @@ def parse_args():
                   help='Number of epochs between model checkpoints')
 
     # Model Settings
-    p.add_argument('--model_type', type=str, default='relu', choices=['sine', 'relu'],
+    p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'relu'],
                   help='Activation function for the neural network')
     p.add_argument('--in_features', type=int, default=3,
                   help='Number of input features for the network')
@@ -117,7 +117,7 @@ def cleanup():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-def try_load_model_from_folder(example, folder_path):
+def load_model_from_folder(example, folder_path):
     """Try to load a model from a given folder path."""
     checkpoint_dir = os.path.join(folder_path, 'checkpoints')
     if os.path.exists(checkpoint_dir):
@@ -172,7 +172,7 @@ def main():
     # Try to load model from previous experiment folder if it exists
     loaded_model = False
     if prev_folder_path:
-        loaded_model = try_load_model_from_folder(example, prev_folder_path)
+        loaded_model = load_model_from_folder(example, prev_folder_path)
 
     # Print model information
     logger.info("Model Architecture:")

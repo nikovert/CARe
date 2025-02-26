@@ -7,6 +7,8 @@ from .learning.loss_functions import HJILossFunction
 from .common.dataset import ReachabilityDataset
 from .common.matlab_loader import load_matlab_data, compare_with_nn
 
+from .common.base_system import DynamicalSystem
+
 # Verification
 from .verification.cegis import CEGISLoop
 
@@ -21,5 +23,6 @@ __all__ = [
     'load_matlab_data',
     'compare_with_nn',
     'HJILossFunction',
-    'CEGISLoop'
+    'CEGISLoop',
+    'DynamicalSystem'
 ]
