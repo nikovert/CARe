@@ -11,6 +11,10 @@ from certreach.verification.verifier_utils.z3_utils import (
     extract_z3_partials,
     verify_with_z3
 )
+from certreach.verification.verifier_utils.marabou_utils import (
+    extract_marabou_network,
+    verify_with_marabou
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +27,7 @@ class SMTVerifier:
         
         Args:
             device: Torch device to use
-            solver_preference: Preferred solver ('z3', 'dreal', or 'auto')
+            solver_preference: Preferred solver ('z3', 'dreal', 'marabou', or 'auto')
         """
         self.device = device
         self.solver_preference = solver_preference
@@ -37,21 +41,26 @@ class SMTVerifier:
             symbolic_model: The symbolic model to analyze
             
         Returns:
-            str: Selected solver name ('z3' or 'dreal')
+            str: Selected solver name ('z3', 'dreal', or 'marabou')
         """
-        # If user explicitly specified a solver, use that
-        if self.solver_preference in ['z3', 'dreal']:
-            return self.solver_preference
             
         # Auto-select based on model properties
         # Check if model has trigonometric functions (better with dReal)
-        has_trig = (str(str(symbolic_model)).find('sin') >= 0)  or (str(str(symbolic_model)).find('cos') >= 0)
+        has_trig = (str(str(symbolic_model)).find('sin') >= 0) or (str(str(symbolic_model)).find('cos') >= 0)
         
-        if has_trig:
-            self.delta = 0.01  # Default delta for dReal verification
-            return 'dreal'
+        if self.solver_preference in ['z3', 'marabou'] and has_trig:
+            logger.info("Model contains trigonometric functions: Using dReal for verification")
+            self.delta = 0.01
+            return 'dreal'  # Use dReal for models with trigonometric functions
+        elif self.solver_preference == 'auto':
+            if has_trig:
+                logger.info("Model contains trigonometric functions: Using dReal for verification")
+                self.delta = 0.01  # Default delta for dReal verification
+                return 'dreal'
+            else:
+                return 'z3'
         else:
-            return 'z3'  # Default to Z3 for simpler models
+            return self.solver_preference
 
     def validate_counterexample(
         self,
@@ -158,7 +167,7 @@ class SMTVerifier:
         epsilon: float,
     ) -> Tuple[bool, Optional[torch.Tensor], Dict[str, float]]:
         """
-        Verify a trained model using dReal/Z3 with option to reuse symbolic model.
+        Verify a trained model using dReal/Z3/Marabou with option to reuse symbolic model.
         
         Args:
             model_state: The model's state dictionary
@@ -219,7 +228,8 @@ class SMTVerifier:
                 if ce_list:
                     counterexample = torch.tensor(ce_list, device=self.device)
                     logger.info(f"Counterexample found: {counterexample}")
-        else:
+        
+        elif solver == 'z3':
             # Use Z3 for verification
             result = extract_z3_partials(symbolic_model)
             success, counterexample = verify_with_z3(
@@ -235,6 +245,12 @@ class SMTVerifier:
                 additional_constraints=system_specifics.get('additional_constraints', None)
             )
             counterexample = torch.tensor(counterexample, device=self.device) if counterexample else None
+        
+        elif solver == 'marabou':
+            # Use Marabou for verification
+            raise NotImplementedError("Marabou verification is not yet supported")
+        else:
+            raise ValueError(f"Invalid solver selected: {solver}")
             
         timing_info['verification_time'] = time.time() - t_verify_start
         

@@ -50,7 +50,7 @@ def parse_args():
                   help='Number of hidden layers')
     p.add_argument('--num_nl', type=int, default=64,
                   help='Number of neurons per layer')
-    p.add_argument('--use_polynomial', action='store_true', default=True,
+    p.add_argument('--use_polynomial', action='store_true', default=False,
                   help='Whether to use polynomial features')
     p.add_argument('--poly_degree', type=int, default=2,
                   help='Degree of polynomial features if used')
