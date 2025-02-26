@@ -20,18 +20,8 @@ def _check_constraint(constraints) -> z3.Model:
 def parse_counterexample(model: z3.Model):
     """
     Parse the counterexample from a Z3 model.
-    
-    Returns:
-        dict: Counterexample as a dictionary where each variable is mapped to a tuple (value, value).
     """
-    counterexample = {}
-    for d in model.decls():
-        value = model[d]
-        try:
-            num_val = float(value.numeral_as_decimal(10).rstrip('?'))
-            counterexample[d.name()] = (num_val, num_val)
-        except Exception as e:
-            logger.error(f"Error parsing variable {d.name()}: {e}")
+    counterexample = [float(model[d].as_long()) for d in model.decls()]
     return counterexample
 
 def verify_with_z3(z3_value_fn, z3_partials, z3_variables, compute_hamiltonian, compute_boundary, epsilon=0.5,
@@ -53,7 +43,7 @@ def verify_with_z3(z3_value_fn, z3_partials, z3_variables, compute_hamiltonian, 
     
     dv_dt = z3_partials["partial_x_1_1"]
     
-    hamiltonian_value = compute_hamiltonian(state_vars, partials)
+    hamiltonian_value = compute_hamiltonian(state_vars, partials, Abs=z3.Abs)
     if reachMode == 'backward':
         hamiltonian_value = -hamiltonian_value
 
@@ -130,6 +120,107 @@ def verify_with_z3(z3_value_fn, z3_partials, z3_variables, compute_hamiltonian, 
     counterexample = parse_counterexample(result) if not success else None
     return success, counterexample
 
+def sympy_to_z3_converter(syms: dict, exp: sympy.Expr, to_number=lambda x: float(x), expand_pow=True):
+    """
+    Convert a SymPy expression to a Z3-compatible expression.
+
+    Args:
+        syms (dict): Dictionary mapping SymPy symbols to Z3 variables.
+        exp (sympy.Expr): The SymPy expression to be converted.
+        to_number (callable): Function for numeric conversion (default: float).
+        expand_pow (bool): Whether to expand powers manually (default: True).
+
+    Returns:
+        Z3 expression: The equivalent expression in Z3 format.
+    
+    Raises:
+        ValueError: If the expression cannot be converted.
+    """
+    
+    # Handle symbols: Look up corresponding Z3 variable
+    if isinstance(exp, sympy.Symbol):
+        exp_str = str(exp)
+        if exp_str not in syms:
+            raise ValueError(f"[Error] Symbol '{exp_str}' not found in provided symbols dictionary. "
+                             f"Available symbols: {list(syms.keys())}")
+        return syms[exp_str]
+
+    # Handle numeric constants
+    elif isinstance(exp, sympy.Number):
+        try:
+            value = to_number(exp)
+            return z3.RealVal(value)
+        except Exception:
+            return z3.RealVal(float(sympy.Float(exp, len(str(exp)))))
+
+    # Handle addition: Sum all terms
+    elif isinstance(exp, sympy.Add):
+        terms = [sympy_to_z3_converter(syms, arg, to_number, expand_pow) for arg in exp.args]
+        result = terms[0]
+        for term in terms[1:]:
+            result += term
+        return result
+
+    # Handle multiplication: Multiply all terms
+    elif isinstance(exp, sympy.Mul):
+        terms = [sympy_to_z3_converter(syms, arg, to_number, expand_pow) for arg in exp.args]
+        result = terms[0]
+        for term in terms[1:]:
+            result *= term
+        return result
+
+    # Handle exponentiation (powers)
+    elif isinstance(exp, sympy.Pow):
+        base = sympy_to_z3_converter(syms, exp.args[0], to_number, expand_pow)
+        exponent = exp.args[1]
+
+        # Expand integer powers if requested
+        if expand_pow:
+            try:
+                exp_val = float(exponent)
+                if exp_val.is_integer():
+                    exp_val = int(exp_val)
+                    if exp_val >= 0:  # Positive exponent
+                        result = 1
+                        for _ in range(exp_val):
+                            result *= base
+                        return result
+                    else:  # Negative exponent - use division
+                        result = 1
+                        for _ in range(-exp_val):
+                            result /= base
+                        return result
+            except Exception:
+                pass
+        
+        # For non-integer exponents or if expansion fails
+        exponent_converted = sympy_to_z3_converter(syms, exponent, to_number, expand_pow)
+        return z3.simplify(z3.Pow(base, exponent_converted))
+
+    # Handle # Handle Heaviside function using ITE (if-then-else)
+    elif isinstance(exp, sympy.Heaviside):
+            arg = sympy_to_z3_converter(syms, exp.args[0], to_number, expand_pow)
+            return z3.If(arg < 0, 0, 1)
+
+    # Handle Max/Min expressions
+    elif isinstance(exp, sympy.Max) or isinstance(exp, sympy.Min):
+        args = [sympy_to_z3_converter(syms, arg, to_number, expand_pow) for arg in exp.args]
+        if isinstance(exp, sympy.Max):
+            # Process pairwise for multiple arguments
+            result = args[0]
+            for arg in args[1:]:
+                result = z3.If(result > arg, result, arg)
+            return result
+        else:  # Min
+            result = args[0]
+            for arg in args[1:]:
+                result = z3.If(result < arg, result, arg)
+            return result
+
+    # Raise an error if the term is unsupported
+    logger.error(f"Unsupported term in Z3 conversion: {exp} (type: {type(exp)})")
+    raise ValueError(f"[Error] Unsupported term in Z3 conversion: {exp} (type: {type(exp)})")
+
 def extract_z3_partials(final_symbolic_expression):
     """
     Extracts Z3-compatible variables, value_function and partial derivatives 
@@ -156,10 +247,19 @@ def extract_z3_partials(final_symbolic_expression):
     # Convert symbolic partial derivatives to Z3 expressions
     z3_partials = {}
     for var, partial in zip(input_symbols, partials):
-        z3_partials[f"partial_{str(var)}"] = z3.simplify(z3.RealVal(partial))
+        partial_result = sympy_to_z3_converter(z3_variables, partial)
+        z3_partials[f"partial_{str(var)}"] = partial_result
+
+    # Convert symbolic value function to Z3 expression
+    z3_value_fn = sympy_to_z3_converter(z3_variables, final_symbolic_expression[0])
 
     return {
+        "input_symbols": input_symbols,
+        "partials": partials,
         "z3_variables": z3_variables,
         "z3_partials": z3_partials,
-        "z3_value_fn": z3.simplify(z3.RealVal(final_symbolic_expression[0]))
+        "z3_value_fn": z3_value_fn,
+        **{f"sympy_partial_{i+1}": partial for i, partial in enumerate(partials)},
+        **{f"z3_partial_{i+1}": z3_partials[f"partial_{str(input_symbols[i])}"] 
+           for i in range(len(input_symbols))}
     }

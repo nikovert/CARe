@@ -1,3 +1,4 @@
+from typing import Callable
 import torch
 from certreach.learning.loss_functions import HJILossFunction
 
@@ -18,7 +19,7 @@ class DoubleIntegratorLoss(HJILossFunction):
         self.input_min = input_bounds['min'].to(device)
         self.input_max = input_bounds['max'].to(device)
 
-    def compute_hamiltonian(self, x, p):
+    def compute_hamiltonian(self, x, p, Abs: Callable = torch.abs) -> torch.Tensor:
         """Compute the Hamiltonian for the Double Integrator system."""
         using_torch = isinstance(p[0] if isinstance(p, (list, tuple)) else p[..., 0], torch.Tensor)
         
@@ -39,8 +40,7 @@ class DoubleIntegratorLoss(HJILossFunction):
                 # Use torch.abs(p2) instead of multiplication for efficiency
                 ham += sign * input_magnitude * torch.abs(p2)
             else:
-                # Use dreal.Max to compute absolute value: |p2| = Max(p2, -p2)
-                abs_p2 = abs(p2) # dreal.Max(p2, -p2)
+                abs_p2 = Abs(p2)
                 ham += sign * float(input_magnitude.item()) * abs_p2
         else:
             # Update asymmetric bounds branch with arithmetic formulation
@@ -53,7 +53,7 @@ class DoubleIntegratorLoss(HJILossFunction):
                 # Replace if_then_else with arithmetic operations:
                 a = float(self.input_max.item())
                 b = float(self.input_min.item())
-                abs_p2 = abs(p2) # dreal.Max(p2, -p2)
+                abs_p2 = Abs(p2)
                 # For reach: use a when p2>=0, and b when p2<0, expressed as:
                 #   (a+b)/2 * p2 + (a-b)/2 * |p2|
                 # For avoid: flip the sign on the absolute value term

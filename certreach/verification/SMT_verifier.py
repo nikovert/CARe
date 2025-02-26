@@ -1,8 +1,7 @@
 import time
 import logging
 import torch
-import numpy as np
-from typing import Dict, Any, Tuple, Callable, List, Optional, Union
+from typing import Dict, Any, Tuple, Callable, Optional
 from certreach.verification.verifier_utils.symbolic import extract_symbolic_model
 from certreach.verification.verifier_utils.dreal_utils import (
     extract_dreal_partials,
@@ -199,9 +198,23 @@ class SMTVerifier:
                     reachMode=system_specifics.get('reachMode', 'forward'),
                     setType=system_specifics.get('setType', 'set'),
                     save_directory=system_specifics['root_path'],
-                    execution_mode="sequential",  # Use sequential for better timing info
+                    execution_mode="parallel",  # Use sequential for better timing info
                     additional_constraints=system_specifics.get('additional_constraints', None)
                 )
+            
+                # Convert counterexample to tensor format if found
+                ce_tensor = None
+                if not success and counterexample:
+                    ce_list = []
+                    for key in sorted(counterexample.keys()):
+                        if key.startswith('x_'):  # Only include state variables
+                            interval = counterexample[key]
+                            # Take midpoint of interval as the counterexample point
+                            ce_list.append((interval[0] + interval[1]) / 2)
+                    
+                    if ce_list:
+                        counterexample = torch.tensor(ce_list, device=self.device)
+                        logger.info(f"Counterexample found: {counterexample}")
             else:
                 # Use Z3 for verification
                 result = extract_z3_partials(symbolic_model)
@@ -217,28 +230,15 @@ class SMTVerifier:
                     save_directory=system_specifics['root_path'],
                     additional_constraints=system_specifics.get('additional_constraints', None)
                 )
+                counterexample = torch.tensor(counterexample, device=self.device) if counterexample else None
                 
             timing_info['verification_time'] = time.time() - t_verify_start
-            
-            # Convert counterexample to tensor format if found
-            ce_tensor = None
-            if not success and counterexample:
-                ce_list = []
-                for key in sorted(counterexample.keys()):
-                    if key.startswith('x_'):  # Only include state variables
-                        interval = counterexample[key]
-                        # Take midpoint of interval as the counterexample point
-                        ce_list.append((interval[0] + interval[1]) / 2)
-                
-                if ce_list:
-                    ce_tensor = torch.tensor(ce_list, device=self.device)
-                    logger.info(f"Counterexample found: {ce_tensor}")
             
             logger.info(f"Verification completed: {'successful' if success else 'failed'}")
             logger.debug(f"Symbolic generation: {timing_info.get('symbolic_time', 0):.2f}s, " 
                        f"Verification: {timing_info['verification_time']:.2f}s")
             
-            return success, ce_tensor, timing_info
+            return success, counterexample, timing_info
             
         except Exception as e:
             logger.error("Verification failed with error: %s", str(e))
