@@ -1,16 +1,11 @@
 import torch
 import logging
 from math import sqrt
-import torch.multiprocessing as mp
-import matplotlib
-matplotlib.use('Agg')
-from typing import Callable, List
+from typing import List
 
 from certreach.common.base_system import DynamicalSystem
 from examples.factories import register_example
 
-# Set multiprocessing start method
-mp.set_start_method('spawn', force=True)
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +27,7 @@ class DoubleIntegrator(DynamicalSystem):
     """Double Integrator system for reachability analysis."""
     
     Name = "double_integrator"
-    DEFAULT_MATLAB_FILE = "data/value_function.mat"
+    DEFAULT_MATLAB_FILE = "data/double_integrator.mat"
     NUM_STATES = 2
 
     def __init__(self, args):
@@ -47,7 +42,7 @@ class DoubleIntegrator(DynamicalSystem):
         # Define the boundary condition function
         self.boundary_fn = double_integrator_boundary
     
-    def compute_hamiltonian(self, x, p, Abs: Callable = abs) -> torch.Tensor:
+    def compute_hamiltonian(self, x, p, func_map: dict) -> torch.Tensor:
         """Compute the Hamiltonian for the Double Integrator system."""
         using_torch = isinstance(p[0] if isinstance(p, (list, tuple)) else p[..., 0], torch.Tensor)
         
@@ -64,19 +59,19 @@ class DoubleIntegrator(DynamicalSystem):
         input_min = self.input_bounds['min'].to(self.device)
         input_max = self.input_bounds['max'].to(self.device)
         
-        if torch.allclose(input_max, -input_min):
+        if torch.equal(input_max, -input_min):
             input_magnitude = input_max  # or abs(input_min)
-            sign = 1 if self.reachAim == 'reach' else -1
+            sign = 1 if self.reach_aim == 'reach' else -1
             if using_torch:
                 # Use torch.abs(p2) instead of multiplication for efficiency
                 ham += sign * input_magnitude * torch.abs(p2)
             else:
-                abs_p2 = Abs(p2)
+                abs_p2 = func_map['abs'](p2)
                 ham += sign * float(input_magnitude.item()) * abs_p2
         else:
             # Update asymmetric bounds branch with arithmetic formulation
             if using_torch:
-                if self.reachAim == 'avoid':
+                if self.reach_aim == 'avoid':
                     ham += torch.where(p2 >= 0, input_min * p2, input_max * p2)
                 else:  # reach
                     ham += torch.where(p2 >= 0, input_max * p2, input_min * p2)
@@ -84,11 +79,11 @@ class DoubleIntegrator(DynamicalSystem):
                 # Replace if_then_else with arithmetic operations:
                 a = float(input_max.item())
                 b = float(input_min.item())
-                abs_p2 = Abs(p2)
+                abs_p2 = func_map['abs'](p2)
                 # For reach: use a when p2>=0, and b when p2<0, expressed as:
                 #   (a+b)/2 * p2 + (a-b)/2 * |p2|
                 # For avoid: flip the sign on the absolute value term
-                if self.reachAim == 'reach':
+                if self.reach_aim == 'reach':
                     ham += ((a + b)/2 * p2 + (a - b)/2 * abs_p2)
                 else:  # avoid
                     ham += ((a + b)/2 * p2 - (a - b)/2 * abs_p2)

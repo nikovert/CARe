@@ -5,7 +5,7 @@ from examples.log import configure_logging
 import torch
 from certreach.verification.cegis import CEGISLoop
 from examples.factories import create_example, EXAMPLE_NAMES
-from examples.utils.experiment_utils import get_experiment_folder, setup_experiment_folder
+from examples.experiment_utils import get_experiment_folder, setup_experiment_folder
 import numpy as np
 import random   
 import json
@@ -34,7 +34,7 @@ def parse_args():
                   help='Number of points to sample per batch')
     p.add_argument('--lr', type=float, default=2e-5,
                   help='Learning rate for optimizer')
-    p.add_argument('--num_epochs', type=int, default=int(0.2*10e5),
+    p.add_argument('--num_epochs', type=int, default=int(0.2*1e5),
                   help='Number of training epochs')
     p.add_argument('--epochs_til_ckpt', type=int, default=int(5000),
                   help='Number of epochs between model checkpoints')
@@ -42,10 +42,6 @@ def parse_args():
     # Model Settings
     p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'relu'],
                   help='Activation function for the neural network')
-    p.add_argument('--in_features', type=int, default=3,
-                  help='Number of input features for the network')
-    p.add_argument('--out_features', type=int, default=1,
-                  help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
     p.add_argument('--num_nl', type=int, default=64,
@@ -62,11 +58,11 @@ def parse_args():
                   help='Maximum time for reachability analysis')
     p.add_argument('--input_max', type=float, default=1.0,
                   help='Maximum input magnitude for system')
-    p.add_argument('--minWith', type=str, default='none', choices=['none', 'zero', 'target'],
+    p.add_argument('--min_with', type=str, default='none', choices=['none', 'zero', 'target'],
                   help='Type of minimum operation to use in HJ reachability')
-    p.add_argument('--reachMode', type=str, default='forward', choices=['backward', 'forward'],
+    p.add_argument('--reach_mode', type=str, default='forward', choices=['backward', 'forward'],
                   help='Direction of reachability computation')
-    p.add_argument('--reachAim', type=str, default='reach', choices=['avoid', 'reach'],
+    p.add_argument('--reach_aim', type=str, default='reach', choices=['avoid', 'reach'],
                   help='Whether to compute reach or avoid sets')
     p.add_argument('--setType', type=str, default='set', choices=['set', 'tube'],
                   help='Whether to compute reachable set or tube')
@@ -92,7 +88,7 @@ def parse_args():
                   help='SMT solver to use for verification (auto will select based on problem)')
     
     # Add device argument
-    p.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
+    p.add_argument('--device', type=str, default=None,
                   help='Device to use for computation (cuda/cpu)')
     
     # Add solution checking argument
@@ -106,6 +102,10 @@ def parse_args():
                   help='Percentage of points to sample at t=0')
 
     args = p.parse_args()
+
+    # Set device default if not explicitly set
+    if args.device is None:
+        args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Set pin_memory based on device type if not explicitly set
     args.pin_memory = args.device == 'cpu'
@@ -129,6 +129,7 @@ def load_model_from_folder(example, folder_path):
                     logger.info(f"Loaded model from {model_path}")
                     return True
                 except Exception as e:
+                    logger.error(f"Failed to load model from {model_path}: {e}")
                     continue
     return False
 
@@ -223,7 +224,10 @@ def main():
         # Add comparison with true values if requested
         if args.check_solution:
             logger.info("Comparing results with true values...")
-            example.compare_with_true_values()
+            try:
+                example.compare_with_true_values()
+            except Exception as e:
+                logger.error(f"Error comparing with true values: {e}")
 
     logger.info("Experiment completed")
     cleanup()

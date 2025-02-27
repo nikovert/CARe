@@ -10,6 +10,14 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 use_if_then_else = False
 
+func_map = {
+            'sin': dreal.sin,    # Sine function
+            'cos': dreal.cos,    # Cosine function
+            'exp': dreal.exp,    # Exponential function
+            'tanh': dreal.tanh,  # Hyperbolic tangent
+            'abs': abs           # Absolute value
+        }
+
 def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[dreal.Box]:
     """Helper function to check a single constraint."""
     logger.debug(f"Starting constraint check with precision {precision}")
@@ -63,7 +71,7 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     dv_dt = dreal_partials["partial_x_1_1"]
 
     # Use class method for Hamiltonian computation
-    hamiltonian_value = compute_hamiltonian(state_vars, partials)
+    hamiltonian_value = compute_hamiltonian(state_vars, partials, func_map)
 
     if reachMode == 'backward':
         hamiltonian_value = -hamiltonian_value

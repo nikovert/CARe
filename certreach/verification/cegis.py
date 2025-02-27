@@ -27,12 +27,41 @@ class CEGISResult:
     total_time: Optional[float] = None
 
 class CEGISLoop:
-    """Counter-Example Guided Inductive Synthesis (CEGIS) Loop implementation."""
+    """Counter-Example Guided Inductive Synthesis (CEGIS) Loop implementation.
+    
+    Attributes:
+        example: The example system to verify.
+        args: Arguments for training and dataset creation.
+        device (torch.device): Device to run computations on (CPU or GPU).
+        max_iterations (int): Maximum number of CEGIS iterations.
+        current_epsilon (float): Current epsilon value for verification.
+        best_epsilon (float): Best (smallest) epsilon achieved during verification.
+        best_model_path (str): Path to the best verified model.
+        best_model_state (dict): State dictionary of the best verified model.
+        timing_history (list): List of TimingStats for each iteration.
+        current_symbolic_model: Current symbolic model representation.
+        min_epsilon (float): Minimum epsilon threshold to verify.
+        pruning_percentage (float): Threshold for pruning, default is 0.25.
+        prune_after_initial (bool): Whether to prune after initial training.
+        verifier (SMTVerifier): The verifier instance used for formal verification.
+        initial_lr (float): Initial learning rate for training.
+        fine_tune_lr (float): Learning rate for fine-tuning after counterexamples.
+        fine_tune_epochs (int): Number of epochs for fine-tuning.
+        dataset (ReachabilityDataset): Training dataset instance.
+        last_training_time (float): Duration of the most recent training phase.
+    """
     
     def __init__(self, example, args):
+        """
+        Initialize the CEGISLoop instance.
+
+        Args:
+            example: The example system to verify.
+            args: Arguments for training and dataset creation.
+        """
         self.example = example
         self.args = args # To pass on arguments to training and dataset creation
-        self.device = torch.device(args.device)
+        self.device = torch.device(getattr(args, 'device', 'cuda' if torch.cuda.is_available() else 'cpu'))
         self.max_iterations = args.max_iterations
         self.current_epsilon = args.epsilon
         self.best_epsilon = float('inf')
@@ -49,8 +78,8 @@ class CEGISLoop:
         self.verifier = SMTVerifier(device=self.device, solver_preference=solver_preference)
 
         self.initial_lr = args.lr
-        self.fine_tune_lr = args.lr * 0.1  # Lower learning rate for fine-tuning
-        self.fine_tune_epochs = args.num_epochs // 4  # Fewer epochs for fine-tuning
+        self.fine_tune_lr = getattr(args, 'fine_tune_lr', args.lr * 0.1)  # Configurable fine-tuning learning rate
+        self.fine_tune_epochs = getattr(args, 'fine_tune_epochs', args.num_epochs // 4)  # Configurable fine-tuning epochs
                 
         # Initialize dataset if not already existing
         self.dataset = ReachabilityDataset(

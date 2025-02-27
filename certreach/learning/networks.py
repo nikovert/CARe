@@ -109,11 +109,13 @@ class PolynomialFunction(torch.autograd.Function):
         results = [time]
         
         # Compute polynomial terms for states [x, x^2, ..., x^degree]
+        current_power = states
         for i in range(1, degree + 1):
             if i == 1:
-                results.append(states)  # Linear terms for states
+                results.append(current_power)  # Linear terms for states
             else:
-                results.append(states**i)  # Higher order terms only for states
+                current_power = current_power * states  # Compute higher order terms
+                results.append(current_power)  # Higher order terms only for states
                 
         return torch.cat(results, dim=-1)
 
@@ -170,20 +172,23 @@ class PolynomialLayer(torch.nn.Module):
         # Calculate expected output features:
         # 1 (time stays linear) + (in_features-1)*degree (polynomial terms for states)
         expected_out_features = 1 + (in_features - 1) * degree
-        
         if out_features != expected_out_features:
-            raise ValueError(f"out_features must be 1 + (in_features-1)*degree. "
-                           f"Got {out_features} != {expected_out_features}")
-
+            raise ValueError(f"Expected output features: {expected_out_features}, got {out_features}")
+        
     def forward(self, x):
         """
         Applies polynomial transformation using custom autograd function.
 
         Args:
             x (torch.Tensor): Input tensor of shape (batch_size, in_features)
+                - The first feature is assumed to be the time component.
+                - The remaining features are considered state components.
 
         Returns:
-            torch.Tensor: Concatenated tensor with shape (batch_size, in_features * degree)
+            torch.Tensor: Transformed tensor of shape (batch_size, out_features)
+                - The first feature remains the time component.
+                - The remaining features are polynomial terms of the state components up to the specified degree.
+                - The output shape is (batch_size, 1 + (in_features - 1) * degree).
         """
         if x.shape[-1] != self.in_features:
             raise ValueError(f"Expected input with {self.in_features} features, got {x.shape[-1]}")
@@ -600,10 +605,9 @@ class SingleBVPNet(torch.nn.Module):
                         if mask is not None:
                             param.data *= mask
         
-        coords_org = model_input['coords'].to(self.device, non_blocking=True)
-        coords = coords_org
+        coords = model_input['coords'].to(self.device, non_blocking=True)
         output = self.net(coords)
-        return {'model_in': coords_org, 'model_out': output}
+        return {'model_in': coords, 'model_out': output}
 
     @property
     def device(self):

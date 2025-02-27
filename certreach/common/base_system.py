@@ -29,7 +29,7 @@ class DynamicalSystem:
             args: Command line arguments
         """
         self.args = args
-        self.device = torch.device(args.device)
+        self.device = torch.device(getattr(args, 'device', 'cuda' if torch.cuda.is_available() else 'cpu'))
         self.root_path = None  # Set by experiment manager
         
         # Model and functions are initialized later
@@ -42,9 +42,9 @@ class DynamicalSystem:
         self.input_bounds = None
         
         # Loss settings from args
-        self.minWith = args.minWith if hasattr(args, 'minWith') else 'none'
-        self.reachMode = args.reachMode if hasattr(args, 'reachMode') else 'backward'
-        self.reachAim = args.reachAim if hasattr(args, 'reachAim') else 'reach'
+        self.min_with = args.min_with if hasattr(args, 'min_with') else 'none'
+        self.reach_mode = args.reach_mode if hasattr(args, 'reach_mode') else 'backward'
+        self.reach_aim = args.reach_aim if hasattr(args, 'reach_aim') else 'reach'
         
     def initialize_components(self):
         """
@@ -54,8 +54,8 @@ class DynamicalSystem:
         # Initialize model if needed
         if self.model is None:
             config = NetworkConfig(
-                in_features=self.args.in_features,
-                out_features=self.args.out_features,
+                in_features=self.NUM_STATES+1,
+                out_features=1,
                 hidden_features=self.args.num_nl,
                 num_hidden_layers=self.args.num_hl,
                 activation_type=self.args.model_type, 
@@ -77,9 +77,9 @@ class DynamicalSystem:
         # Create the HJI Loss Function passing our system's Hamiltonian
         loss_function = HJILossFunction(
             hamiltonian_fn=self.compute_hamiltonian,
-            minWith=self.minWith, 
-            reachMode=self.reachMode, 
-            reachAim=self.reachAim
+            min_with=self.min_with, 
+            reach_mode=self.reach_mode, 
+            reach_aim=self.reach_aim
         )
         
         return loss_function.compute_loss

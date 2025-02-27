@@ -24,6 +24,8 @@ class SMTVerifier:
         Args:
             device: Torch device to use
             solver_preference: Preferred solver ('z3', 'dreal', 'marabou', or 'auto')
+        Raises:
+            ValueError: If an invalid solver is selected.
         """
         self.device = device
         self.solver_preference = solver_preference
@@ -71,12 +73,10 @@ class SMTVerifier:
         
         Args:
             counterexample: Tensor representing the counterexample point
-            compute_hamiltonian: Function to compute the Hamiltonian
+            loss_fn: Loss function to compute the PDE residual
             compute_boundary: Function to compute boundary conditions
             epsilon: Verification tolerance
-            system_specifics: System-specific information
-            model: Pre-loaded model instance (optional). If provided, 
-                   model_state and model_config are ignored.
+            model: Pre-loaded model instance
             
         Returns:
             Dict[str, Any]: Validation results including violation details
@@ -99,8 +99,7 @@ class SMTVerifier:
             counterexample = counterexample.to(self.device)
         
         # Convert counterexample to required format for model input and ensure it requires gradients
-        ce_coords = counterexample.clone().detach().requires_grad_(True).unsqueeze(0)
-        ce_input = {'coords': ce_coords}
+        ce_input = {'coords': counterexample.clone().detach().requires_grad_(True).unsqueeze(0)}
         ce_states = counterexample[1:].unsqueeze(0)
         
         # Get model output
@@ -133,17 +132,17 @@ class SMTVerifier:
             delta = 0
 
         # Determine which condition is violated based on epsilon
-        if boundary_diff is not None and boundary_diff > epsilon+delta:
+        if boundary_diff is not None and boundary_diff > epsilon-delta:
             result['is_valid_ce'] = True
             result['violation_type'] = 'boundary'
             result['violation_amount'] = boundary_diff
-            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon+delta}")
+            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon-delta}")
         
-        elif pde_residual > epsilon+delta:
+        elif pde_residual > epsilon-delta:
             result['is_valid_ce'] = True
             result['violation_type'] = 'pde'
             result['violation_amount'] = pde_residual
-            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon+delta}")
+            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon-delta}")
         
         else:
             boundary_info = f"Boundary diff: {boundary_diff:.6f}, " if boundary_diff is not None else ""
@@ -224,6 +223,8 @@ class SMTVerifier:
                 if ce_list:
                     counterexample = torch.tensor(ce_list, device=self.device)
                     logger.info(f"Counterexample found: {counterexample}")
+            else:
+                counterexample = None
         
         elif solver == 'z3':
             # Use Z3 for verification

@@ -63,7 +63,8 @@
                 "--example", "double_integrator",
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
-                "--prune_after_initial"
+                "--prune_after_initial",
+                "--use_polynomial",
             ],
             "console": "integratedTerminal",
             "justMyCode": true,

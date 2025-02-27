@@ -2,13 +2,13 @@ import torch
 from torch.autograd import grad
 
 def hessian(y, x):
-    ''' hessian of y wrt x
+    """ hessian of y wrt x
     y: shape (meta_batch_size, num_observations, channels)
     x: shape (meta_batch_size, num_observations, 2)
-    '''
+    """
     meta_batch_size, num_observations = y.shape[:2]
-    grad_y = torch.ones_like(y[..., 0]).to(y.device)
-    h = torch.zeros(meta_batch_size, num_observations, y.shape[-1], x.shape[-1], x.shape[-1]).to(y.device)
+    grad_y = torch.ones(meta_batch_size, num_observations, device=y.device)
+    h = torch.zeros(meta_batch_size, num_observations, y.shape[-1], x.shape[-1], x.shape[-1], device=y.device)
     for i in range(y.shape[-1]):
         # calculate dydx over batches for each feature value of y
         dydx = grad(y[..., i], x, grad_y, create_graph=True)[0]
@@ -22,7 +22,7 @@ def hessian(y, x):
         status = -1
     return h, status
 
-def laplace(y, x):
+def laplacian(y, x):
     grad = gradient(y, x)
     return divergence(grad, x)
 
@@ -42,7 +42,7 @@ def gradient(y, x, grad_outputs=None):
 def jacobian(y, x):
     ''' jacobian of y wrt x '''
     meta_batch_size, num_observations = y.shape[:2]
-    jac = torch.zeros(meta_batch_size, num_observations, y.shape[-1], x.shape[-1]).to(y.device) # (meta_batch_size*num_points, 2, 2)
+    jac = torch.zeros(meta_batch_size, num_observations, y.shape[-1], x.shape[-1], device=y.device)
     for i in range(y.shape[-1]):
         # calculate dydx over batches for each feature value of y
         y_flat = y[...,i].view(-1, 1)

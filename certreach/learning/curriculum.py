@@ -1,12 +1,12 @@
 import logging
 from typing import Dict
-from ..common.dataset import ReachabilityDataset
+from certreach.common.dataset import ReachabilityDataset
 
 logger = logging.getLogger(__name__)
 
 class Curriculum:
     """Manages curriculum learning progress for ReachabilityDataset."""
-    
+    DIRICHLET_WEIGHT = 1/15e2
     def __init__(self, 
                  dataset: ReachabilityDataset,
                  pretrain_percentage: int,
@@ -20,6 +20,7 @@ class Curriculum:
         self.dataset = dataset
         self.pretrain_percentage = pretrain_percentage
         self.total_steps = total_steps
+        self.pretrain_steps = self.pretrain_percentage * self.total_steps
         self.time_min = time_min
         self.time_max = time_max
         self.current_step = 0
@@ -38,7 +39,7 @@ class Curriculum:
         """Get current curriculum progress."""
         if not self.rollout:
             return 1.0
-        elif self.current_step < self.pretrain_percentage*self.total_steps:
+        if self.current_step < self.pretrain_steps:
             return 0.0
         else:
             progress = 2*(self.current_step/self.total_steps - self.pretrain_percentage)/(1 - self.pretrain_percentage)
@@ -52,7 +53,7 @@ class Curriculum:
             
     @property
     def is_pretraining(self) -> bool:
-        return not (self.get_progress() > 0.0)
+        return self.get_progress() == 0.0
     
     def get_loss_weights(self, batch_size) -> Dict[str, float]:
         """
@@ -65,13 +66,13 @@ class Curriculum:
         if self.is_pretraining:
             # During pretraining, focus more on Dirichlet boundary conditions
             weights = {
-                'dirichlet': batch_size / 15e2,
+                'dirichlet': batch_size*self.DIRICHLET_WEIGHT,
                 'diff_constraint_hom': 1.0
             }
         else:
             # Gradually increase importance of homogeneous differential constraint
             weights = {
-                'dirichlet': batch_size / 15e2,
+                'dirichlet': batch_size*self.DIRICHLET_WEIGHT,
                 'diff_constraint_hom': 1.0
             }
         
