@@ -85,7 +85,7 @@ class ReachabilityDataset(Dataset):
             torch.Tensor: Sampled points of shape (num_points, num_states + 1)
         """
         if self.counterexamples is None:
-            return torch.empty(0, self.num_states, device=self.device)
+            return torch.empty(0.0, self.num_states, device=self.device)
             
         counter_idx = torch.randint(0, self.counterexamples.shape[0], (num_points,))
         # Create a new tensor that requires gradients

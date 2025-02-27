@@ -41,7 +41,6 @@ def gradient(y, x, grad_outputs=None):
 
 def jacobian(y, x):
     ''' jacobian of y wrt x '''
-    # Fallback to the original implementation if the optimized version fails
     meta_batch_size, num_observations = y.shape[:2]
     jac = torch.zeros(meta_batch_size, num_observations, y.shape[-1], x.shape[-1], device=y.device)
     for i in range(y.shape[-1]):
