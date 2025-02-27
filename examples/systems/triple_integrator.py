@@ -1,10 +1,10 @@
 import os
 import torch
 import logging
-import numpy as np
-from math import sqrt
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from typing import Callable, List, Optional
+from typing import List
 
 from certreach.common.base_system import DynamicalSystem
 from examples.factories import register_example
@@ -51,7 +51,7 @@ class TripleIntegrator(DynamicalSystem):
         # Define the boundary condition function
         self.boundary_fn = triple_integrator_boundary
     
-    def compute_hamiltonian(self, x, p, Abs: Callable = abs) -> torch.Tensor:
+    def compute_hamiltonian(self, x, p, func_map: dict) -> torch.Tensor:
         """
         Compute the Hamiltonian for the Triple Integrator system.
         
@@ -82,12 +82,12 @@ class TripleIntegrator(DynamicalSystem):
             if using_torch:
                 ham += input_max * torch.abs(p3)
             else:
-                ham += float(input_max) * Abs(p3)
+                ham += float(input_max) * func_map['abs'](p3)
         else:  # avoid
             if using_torch:
                 ham -= input_max * torch.abs(p3)
             else:
-                ham -= float(input_max) * Abs(p3)
+                ham -= float(input_max) * func_map['abs'](p3)
                 
         return ham
 

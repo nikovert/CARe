@@ -39,7 +39,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/examples/main.py",
             "args": [
-                "--example", "double_integrator",
+                "--example", "air3d",
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
                 "--num_epochs", "10",

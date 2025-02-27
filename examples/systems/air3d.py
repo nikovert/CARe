@@ -2,17 +2,13 @@ import os
 import torch
 import logging
 import numpy as np
-import torch.multiprocessing as mp
-from typing import Callable, List
+from typing import List
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from certreach.common.base_system import DynamicalSystem
 from examples.factories import register_example
-
-# Set multiprocessing start method
-mp.set_start_method('spawn', force=True)
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +53,10 @@ class Air3D(DynamicalSystem):
         # Define the boundary condition function
         self.boundary_fn = lambda states: air3d_boundary(states, self.collision_radius)
     
-    def compute_hamiltonian(self, x, p, Abs: Callable = abs) -> torch.Tensor:
+    def compute_hamiltonian(self, x, p, func_map: dict) -> torch.Tensor:
         """Compute the Hamiltonian for the Air3D system."""
         using_torch = isinstance(p[0] if isinstance(p, (list, tuple)) else p[..., 0], torch.Tensor)
-        
+
         if using_torch:
             # x is [batch, 3] for [x, y, theta]
             # p is [batch, 3] for [p_x, p_y, p_theta]
@@ -76,17 +72,16 @@ class Air3D(DynamicalSystem):
                 ham -= self.omega_max * torch.abs(p_theta)  # Maximize angular velocity
             else:  # reach
                 ham += self.omega_max * torch.abs(p_theta)  # Minimize angular velocity
-                
         else:
             # dReal mode - symbolic computation
             theta = x[2] * self.alpha_angle
             p_x, p_y, p_theta = p[0], p[1], p[2] / self.alpha_angle
             
             # Compute Hamiltonian terms with dReal functions
-            ham = p_x * self.velocity * dreal.cos(theta) + p_y * self.velocity * dreal.sin(theta)
+            ham = p_x * self.velocity * func_map['cos'](theta) + p_y * self.velocity * func_map['sin'](theta)
             
             # Control input term using Abs function provided (could be dreal.abs)
-            abs_p_theta = Abs(p_theta)
+            abs_p_theta = func_map['abs'](p_theta)
             if self.reachAim == 'avoid':
                 ham -= self.omega_max * abs_p_theta  # Maximize angular velocity
             else:  # reach

@@ -29,9 +29,8 @@ def get_experiment_folder(logging_root, experiment_name):
         folders = []
     
     numbered_folders = find_numbered_folder(folders)
-    prev_folder = numbered_folders[0][1]
-    if prev_folder:
-        prev_folder_path = os.path.join(logging_root, prev_folder)
+    if numbered_folders:
+        prev_folder_path = os.path.join(logging_root, numbered_folders[0][1])
         iteration_folders = [f for f in os.listdir(prev_folder_path) if f.startswith("iteration") or f.startswith("initial")]
         if iteration_folders:
             if len(iteration_folders) > 1:

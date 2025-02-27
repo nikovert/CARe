@@ -42,10 +42,6 @@ def parse_args():
     # Model Settings
     p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'relu'],
                   help='Activation function for the neural network')
-    p.add_argument('--in_features', type=int, default=3,
-                  help='Number of input features for the network')
-    p.add_argument('--out_features', type=int, default=1,
-                  help='Number of output features from the network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
     p.add_argument('--num_nl', type=int, default=64,
@@ -223,7 +219,10 @@ def main():
         # Add comparison with true values if requested
         if args.check_solution:
             logger.info("Comparing results with true values...")
-            example.compare_with_true_values()
+            try:
+                example.compare_with_true_values()
+            except Exception as e:
+                logger.error(f"Error comparing with true values: {e}")
 
     logger.info("Experiment completed")
     cleanup()

@@ -133,17 +133,17 @@ class SMTVerifier:
             delta = 0
 
         # Determine which condition is violated based on epsilon
-        if boundary_diff is not None and boundary_diff > epsilon+delta:
+        if boundary_diff is not None and boundary_diff > epsilon-delta:
             result['is_valid_ce'] = True
             result['violation_type'] = 'boundary'
             result['violation_amount'] = boundary_diff
-            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon+delta}")
+            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon-delta}")
         
-        elif pde_residual > epsilon+delta:
+        elif pde_residual > epsilon-delta:
             result['is_valid_ce'] = True
             result['violation_type'] = 'pde'
             result['violation_amount'] = pde_residual
-            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon+delta}")
+            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon-delta}")
         
         else:
             boundary_info = f"Boundary diff: {boundary_diff:.6f}, " if boundary_diff is not None else ""

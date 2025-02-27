@@ -7,6 +7,8 @@ import sympy
 
 logger = logging.getLogger(__name__)
 
+func_map = {'abs': z3.Abs}
+
 def _check_constraint(constraints) -> z3.Model:
     """Helper function to check constraints with Z3."""
     solver = z3.Solver()
@@ -43,7 +45,7 @@ def verify_with_z3(z3_value_fn, z3_partials, z3_variables, compute_hamiltonian, 
     
     dv_dt = z3_partials["partial_x_1_1"]
     
-    hamiltonian_value = compute_hamiltonian(state_vars, partials, Abs=z3.Abs)
+    hamiltonian_value = compute_hamiltonian(state_vars, partials, func_map)
     if reachMode == 'backward':
         hamiltonian_value = -hamiltonian_value
 

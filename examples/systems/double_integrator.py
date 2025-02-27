@@ -2,9 +2,7 @@ import torch
 import logging
 from math import sqrt
 import torch.multiprocessing as mp
-import matplotlib
-matplotlib.use('Agg')
-from typing import Callable, List
+from typing import List
 
 from certreach.common.base_system import DynamicalSystem
 from examples.factories import register_example
@@ -47,7 +45,7 @@ class DoubleIntegrator(DynamicalSystem):
         # Define the boundary condition function
         self.boundary_fn = double_integrator_boundary
     
-    def compute_hamiltonian(self, x, p, Abs: Callable = abs) -> torch.Tensor:
+    def compute_hamiltonian(self, x, p, func_map: dict) -> torch.Tensor:
         """Compute the Hamiltonian for the Double Integrator system."""
         using_torch = isinstance(p[0] if isinstance(p, (list, tuple)) else p[..., 0], torch.Tensor)
         
@@ -71,7 +69,7 @@ class DoubleIntegrator(DynamicalSystem):
                 # Use torch.abs(p2) instead of multiplication for efficiency
                 ham += sign * input_magnitude * torch.abs(p2)
             else:
-                abs_p2 = Abs(p2)
+                abs_p2 = func_map['cos'](p2)
                 ham += sign * float(input_magnitude.item()) * abs_p2
         else:
             # Update asymmetric bounds branch with arithmetic formulation
@@ -84,7 +82,7 @@ class DoubleIntegrator(DynamicalSystem):
                 # Replace if_then_else with arithmetic operations:
                 a = float(input_max.item())
                 b = float(input_min.item())
-                abs_p2 = Abs(p2)
+                abs_p2 = func_map['abs'](p2)
                 # For reach: use a when p2>=0, and b when p2<0, expressed as:
                 #   (a+b)/2 * p2 + (a-b)/2 * |p2|
                 # For avoid: flip the sign on the absolute value term

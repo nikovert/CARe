@@ -54,8 +54,8 @@ class DynamicalSystem:
         # Initialize model if needed
         if self.model is None:
             config = NetworkConfig(
-                in_features=self.args.in_features,
-                out_features=self.args.out_features,
+                in_features=self.NUM_STATES+1,
+                out_features=1,
                 hidden_features=self.args.num_nl,
                 num_hidden_layers=self.args.num_hl,
                 activation_type=self.args.model_type, 
