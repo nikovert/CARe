@@ -7,7 +7,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/examples/main.py",
             "args": [
-                "--example", "air3d",
+                "--example", "double_integrator",
                 "--run_mode", "train",
                 "--logging_root", "./logs"
             ],
