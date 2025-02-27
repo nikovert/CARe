@@ -24,6 +24,8 @@ class SMTVerifier:
         Args:
             device: Torch device to use
             solver_preference: Preferred solver ('z3', 'dreal', 'marabou', or 'auto')
+        Raises:
+            ValueError: If an invalid solver is selected.
         """
         self.device = device
         self.solver_preference = solver_preference
@@ -71,12 +73,10 @@ class SMTVerifier:
         
         Args:
             counterexample: Tensor representing the counterexample point
-            compute_hamiltonian: Function to compute the Hamiltonian
+            loss_fn: Loss function to compute the PDE residual
             compute_boundary: Function to compute boundary conditions
             epsilon: Verification tolerance
-            system_specifics: System-specific information
-            model: Pre-loaded model instance (optional). If provided, 
-                   model_state and model_config are ignored.
+            model: Pre-loaded model instance
             
         Returns:
             Dict[str, Any]: Validation results including violation details
@@ -99,8 +99,7 @@ class SMTVerifier:
             counterexample = counterexample.to(self.device)
         
         # Convert counterexample to required format for model input and ensure it requires gradients
-        ce_coords = counterexample.clone().detach().requires_grad_(True).unsqueeze(0)
-        ce_input = {'coords': ce_coords}
+        ce_input = {'coords': counterexample.clone().detach().requires_grad_(True).unsqueeze(0)}
         ce_states = counterexample[1:].unsqueeze(0)
         
         # Get model output
@@ -224,6 +223,8 @@ class SMTVerifier:
                 if ce_list:
                     counterexample = torch.tensor(ce_list, device=self.device)
                     logger.info(f"Counterexample found: {counterexample}")
+            else:
+                counterexample = None
         
         elif solver == 'z3':
             # Use Z3 for verification

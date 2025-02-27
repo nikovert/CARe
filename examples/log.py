@@ -48,7 +48,7 @@ def configure_logging(log_file=None, log_level=logging.INFO):
     )
     
     # Add console handler
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
     

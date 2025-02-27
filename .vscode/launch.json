@@ -7,7 +7,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/examples/main.py",
             "args": [
-                "--example", "double_integrator",
+                "--example", "air3d",
                 "--run_mode", "train",
                 "--logging_root", "./logs"
             ],
@@ -39,7 +39,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/examples/main.py",
             "args": [
-                "--example", "air3d",
+                "--example", "double_integrator",
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
                 "--num_epochs", "10",
@@ -63,7 +63,8 @@
                 "--example", "double_integrator",
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
-                "--prune_after_initial"
+                "--prune_after_initial",
+                "--use_polynomial",
             ],
             "console": "integratedTerminal",
             "justMyCode": true,

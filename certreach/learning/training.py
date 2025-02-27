@@ -47,11 +47,9 @@ def train(model: torch.nn.Module,
         time_min: Minimum time value for curriculum learning
         time_max: Maximum time value for curriculum learning
         clip_grad: Whether to clip gradients during training
-        loss_schedules: Dictionary of callable schedules for each loss component
         validation_fn: Optional function to run validation during checkpoints
         start_epoch: Epoch to start or resume training from
         device: Device to use for training (default: CUDA if available, else CPU)
-        use_amp: Whether to use automatic mixed precision training
         l1_lambda: L1 regularization strength
         weight_decay: L2 regularization strength
     
@@ -118,9 +116,6 @@ def train(model: torch.nn.Module,
         time_max=time_max,
         rollout=not is_finetuning  # Disable rollout during fine-tuning
     )
-
-    # Initialize gradient scaler for AMP
-    scaler = torch.amp.GradScaler() if use_amp and device.type == 'cuda' else None  # Updated GradScaler import
 
     # Load the checkpoint if required
     if start_epoch > 0:
@@ -212,8 +207,8 @@ def train(model: torch.nn.Module,
 
             train_losses.append(train_loss.item())
 
-            # Simplified progress reporting
-            if epoch % max(100,(epochs //1000)) == 0:  # Report only 1000 times during training
+            # # Report progress every 100 epochs or 1/1000th of total epochs, whichever is smaller
+            if epoch % max(100,(epochs //1000)) == 0:
                 tqdm.write(f"Epoch {epoch}, Total Loss: {train_loss:.6f},"
                           f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
                           f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}, "
@@ -245,7 +240,7 @@ def train(model: torch.nn.Module,
                     )
                 else:
                     patience_counter += 1
-                    if patience_counter >= 10000:  # Early stopping after 1000 epochs without improvement
+                    if patience_counter >= 10000:  # Early stopping after 10000 epochs without improvement
                         logger.info("Early stopping triggered")
                         break
 

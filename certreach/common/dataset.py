@@ -23,13 +23,12 @@ class ReachabilityDataset(Dataset):
             tMax (float): Maximum time value
             seed (int): Random seed for reproducibility
             device (torch.device): Device to store tensors
-            counterexample (torch.Tensor, optional): Counterexample points [n, state_dim]
+            counterexamples (torch.Tensor, optional): Counterexample points [n, state_dim]
             percentage_in_counterexample (float): Percentage of points near counterexample
             percentage_at_t0 (float): Percentage of points at t=0
             epsilon_radius (float): Radius around counterexample points to sample
             num_states (int): Number of state dimensions
             compute_boundary_values (callable): Function that computes boundary values
-                                            signature: f(coords: torch.Tensor) -> torch.Tensor
         """
         super().__init__()
         torch.manual_seed(seed)
@@ -50,7 +49,7 @@ class ReachabilityDataset(Dataset):
         self.compute_boundary_values = compute_boundary_values
 
         # Counterexample parameters
-        self.counterexamples = counterexamples.to(self.device) if counterexamples is not None else None
+        self.counterexamples = counterexamples if counterexamples is not None else None
         self.percentage_in_counterexample = percentage_in_counterexample
         self.percentage_at_t0 = percentage_at_t0
         self.epsilon_radius = epsilon_radius
@@ -86,14 +85,12 @@ class ReachabilityDataset(Dataset):
             torch.Tensor: Sampled points of shape (num_points, num_states + 1)
         """
         if self.counterexamples is None:
-            return None
+            return torch.empty(0, self.num_states, device=self.device)
             
         counter_idx = torch.randint(0, self.counterexamples.shape[0], (num_points,))
         # Create a new tensor that requires gradients
         counter_points = self.counterexamples[counter_idx].detach().clone()
-        counter_points.requires_grad_(True)
         noise = torch.randn_like(counter_points) * self.epsilon_radius
-        noise.requires_grad_(True)
         return counter_points + noise
 
     def _sample_state_space(self, num_points):
@@ -153,7 +150,7 @@ class ReachabilityDataset(Dataset):
 
         return {'coords': coords}, {
             'source_boundary_values': boundary_values,
-            'dirichlet_mask': dirichlet_mask
+            'dirichlet_mask': dirichlet_mask.bool()
         }
 
     def add_counterexample(self, counterexample: torch.Tensor):

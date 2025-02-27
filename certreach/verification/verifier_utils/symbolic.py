@@ -7,11 +7,11 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-def sine_transform(x, frequency=30.0):
+def sine_transform(x: sympy.Basic, frequency: float = 30.0) -> sympy.Basic:
     """Helper function for sine transformation."""
     return sympy.sin(frequency * x)
 
-def power_transform(x, power, is_time=False):
+def power_transform(x: sympy.Symbol, power: int, is_time: bool = False) -> sympy.Symbol:
     """Helper function for polynomial transformation."""
     if is_time:  # Time component stays linear
         return x
@@ -19,14 +19,14 @@ def power_transform(x, power, is_time=False):
 
 class SymbolicPolynomialTransform:
     """A picklable class for polynomial transformations."""
-    def __init__(self, power, is_time=False):
+    def __init__(self, power: int, is_time: bool = False):
         self.power = power
         self.is_time = is_time
     
-    def __call__(self, x):
+    def __call__(self, x: sympy.Symbol) -> sympy.Symbol:
         return power_transform(x, self.power, self.is_time)
 
-def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
+def get_symbolic_layer_output_generalized(state_dict: Dict[str, torch.Tensor], layer_number: int, config: Dict[str, Any]) -> sympy.Matrix:
     """
     Generate symbolic output for the specified layer using state dict directly.
 
@@ -133,7 +133,7 @@ def get_symbolic_layer_output_generalized(state_dict, layer_number, config):
     logger.info(f"Successfully generated symbolic output for layer {layer_number}")
     return current_output
 
-def compute_layer(state_dict, config, layer_number):
+def compute_layer(state_dict: Dict[str, torch.Tensor], config: Dict[str, Any], layer_number: int) -> sympy.Matrix:
     """Compute symbolic output for a specific layer using state dict."""
     return get_symbolic_layer_output_generalized(
         state_dict, 
@@ -141,7 +141,7 @@ def compute_layer(state_dict, config, layer_number):
         config
     )
 
-def parallel_substitution_task(args):
+def parallel_substitution_task(args) -> sympy.Expr:
     """
     Perform parallel symbolic substitution for a single expression.
     Args:
@@ -154,7 +154,7 @@ def parallel_substitution_task(args):
     # Using xreplace here for fast, dictionary-based substitution
     return expr.xreplace(substitution_map)
 
-def combine_all_layers_parallelized(state_dict, config, simplify=False):
+def combine_all_layers_parallelized(state_dict: Dict[str, torch.Tensor], config: Dict[str, Any], simplify: bool = False) -> sympy.Matrix:
     """
     Combine all layers using state dict directly.
 
@@ -216,7 +216,7 @@ def combine_all_layers_parallelized(state_dict, config, simplify=False):
     logger.info(f"All {num_layers} layers combined successfully.")
     return combined_symbolic_model
 
-def extract_symbolic_model(state_dict: Dict[str, torch.Tensor], config: Dict[str, Any], save_path: str):
+def extract_symbolic_model(state_dict: Dict[str, torch.Tensor], config: Dict[str, Any], save_path: str) -> str:
     """
     Extracts a symbolic representation from the model state dictionary and config.
 

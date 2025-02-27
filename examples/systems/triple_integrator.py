@@ -78,7 +78,7 @@ class TripleIntegrator(DynamicalSystem):
         # Add control contribution
         input_max = self.input_bounds['max'].to(self.device) if using_torch else float(self.input_bounds['max'].item())
         
-        if self.reachAim == 'reach':
+        if self.reach_aim == 'reach':
             if using_torch:
                 ham += input_max * torch.abs(p3)
             else:

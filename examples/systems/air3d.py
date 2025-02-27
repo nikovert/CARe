@@ -1,8 +1,9 @@
 import os
-import torch
 import logging
-import numpy as np
 from typing import List
+
+import torch
+import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -68,7 +69,7 @@ class Air3D(DynamicalSystem):
             ham = p_x * self.velocity * torch.cos(theta) + p_y * self.velocity * torch.sin(theta)
             
             # Control input term based on reach/avoid
-            if self.reachAim == 'avoid':
+            if self.reach_aim == 'avoid':
                 ham -= self.omega_max * torch.abs(p_theta)  # Maximize angular velocity
             else:  # reach
                 ham += self.omega_max * torch.abs(p_theta)  # Minimize angular velocity
@@ -82,13 +83,13 @@ class Air3D(DynamicalSystem):
             
             # Control input term using Abs function provided (could be dreal.abs)
             abs_p_theta = func_map['abs'](p_theta)
-            if self.reachAim == 'avoid':
+            if self.reach_aim == 'avoid':
                 ham -= self.omega_max * abs_p_theta  # Maximize angular velocity
             else:  # reach
                 ham += self.omega_max * abs_p_theta  # Minimize angular velocity
         
         # Apply backward/forward mode adjustment
-        if self.reachMode == 'backward':
+        if self.reach_mode == 'backward':
             ham = -ham
             
         return ham
