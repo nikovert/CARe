@@ -4,7 +4,7 @@ import logging
 import inspect
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Dict, Union, Tuple
 
 from certreach.learning.networks import SingleBVPNet, NetworkConfig
 from certreach.common.dataset import ReachabilityDataset
@@ -108,8 +108,8 @@ class DynamicalSystem:
         
         dataset = ReachabilityDataset(
             batch_size=self.args.batch_size,
-            tMin=self.args.tMin,
-            tMax=self.args.tMax,
+            t_min=self.args.t_min,
+            t_max=self.args.t_max,
             seed=self.args.seed,
             device=self.device,
             num_states=self.NUM_STATES,
@@ -128,8 +128,8 @@ class DynamicalSystem:
             model_dir=self.root_path,
             loss_fn=self.loss_fn,
             pretrain_percentage=self.args.pretrain_percentage,
-            time_min=self.args.tMin,
-            time_max=self.args.tMax,
+            time_min=self.args.t_min,
+            time_max=self.args.t_max,
             validation_fn=self.validate,
             device=self.device,
             use_amp=True
@@ -139,25 +139,20 @@ class DynamicalSystem:
         """Get state variable names for plotting."""
         return [f"x{i+1}" for i in range(self.NUM_STATES)]
     
-    def validate(self, model, ckpt_dir, epoch, tmax=None):
+    def validate(self, model, ckpt_dir, epoch, t_max=None):
         """
         Validation function called during training.
         Visualizes value function at different time slices.
         
-        Currently supports visualization for 1D and 2D state spaces.
-        For higher-dimensional systems, subclasses should override this method.
+        For 1D systems: Plots the value function directly
+        For 2D systems: Creates contour plots
+        For 3D+ systems: Creates contour plots of 2D slices with fixed values for other dimensions
         """
-        if self.NUM_STATES > 2:
-            logger.warning("Default validate() only supports 1D and 2D state spaces. "
-                          f"This system has {self.NUM_STATES} states. "
-                          "Consider implementing a custom validate() method.")
-            return
-        
         # Define evaluation time points
-        if tmax is None or tmax == self.args.tMax:
-            times = [self.args.tMin, 0.5*(self.args.tMin + self.args.tMax), self.args.tMax]
+        if t_max is None or t_max == self.args.t_max:
+            times = [self.args.t_min, 0.5*(self.args.t_min + self.args.t_max), self.args.t_max]
         else:
-            times = [self.args.tMin, tmax, self.args.tMax]
+            times = [self.args.t_min, t_max, self.args.t_max]
         
         num_times = len(times)
         state_names = self._get_state_names()
@@ -214,17 +209,113 @@ class DynamicalSystem:
                 axes[i].set_ylabel(state_names[1])
                 fig.colorbar(contour, ax=axes[i])
         
+        else:
+            # Higher-dimensional state spaces (n > 2)
+            # For systems with more than 2 states, we'll visualize 2D slices
+            # by fixing the values of the remaining states
+            
+            # Fixed values for states beyond the first two
+            # Default: all fixed values are 0.0
+            fixed_states = getattr(self, 'validation_fixed_states', [0.0] * (self.NUM_STATES - 2))
+            
+            # Number of slices to show (can be customized by subclasses)
+            num_slices = getattr(self, 'validation_num_slices', 1)
+            slice_values = []
+            
+            if hasattr(self, 'validation_slice_values'):
+                # Use predefined slice values if provided
+                slice_values = self.validation_slice_values
+                num_slices = len(slice_values)
+            else:
+                # Use the first state beyond x1,x2 for slicing, with predefined values
+                slice_dim = getattr(self, 'validation_slice_dim', 2)  # Default: the 3rd state (index 2)
+                slice_values = []
+                
+                # Default slices: centered at 0 with equal spacing
+                if num_slices == 1:
+                    slice_values = [0.0]
+                else:
+                    slice_values = np.linspace(-0.5, 0.5, num_slices)
+            
+            # Create a figure with a grid of plots: times × slices
+            fig, axes = plt.subplots(num_times, num_slices, 
+                                     figsize=(5 * num_slices, 5 * num_times))
+            
+            # Handle case where we have only one time or slice
+            if num_times == 1 and num_slices == 1:
+                axes = np.array([[axes]])
+            elif num_times == 1:
+                axes = axes[np.newaxis, :]
+            elif num_slices == 1:
+                axes = axes[:, np.newaxis]
+            
+            # For each time and slice, create a 2D contour plot
+            for i, t in enumerate(times):
+                for j, slice_val in enumerate(slice_values):
+                    # Create a meshgrid for the first two states
+                    X1, X2 = torch.meshgrid(state_range, state_range, indexing='ij')
+                    x1_flat = X1.reshape(-1, 1)
+                    x2_flat = X2.reshape(-1, 1)
+                    
+                    # Create constant values for time and remaining states
+                    batch_size = x1_flat.shape[0]
+                    time_coords = torch.ones(batch_size, 1) * t
+                    
+                    # Create coordinates for all states
+                    state_tensors = [x1_flat, x2_flat]
+                    
+                    # If we have specific slice values, update fixed_states accordingly
+                    current_fixed_states = fixed_states.copy()
+                    if hasattr(self, 'validation_slice_dim'):
+                        slice_dim = self.validation_slice_dim
+                        if 0 <= slice_dim - 2 < len(current_fixed_states):
+                            current_fixed_states[slice_dim - 2] = slice_val
+                    
+                    # Add the fixed values for remaining states
+                    for fixed_val in current_fixed_states:
+                        state_tensors.append(torch.ones(batch_size, 1) * fixed_val)
+                    
+                    # Concatenate all states with time
+                    coords = torch.cat([time_coords] + state_tensors, dim=1).to(self.device)
+                    
+                    # Get model output
+                    model_in = {'coords': coords}
+                    model_out = model(model_in)['model_out'].detach().cpu().numpy().reshape(X1.shape)
+                    
+                    # Create the contour plot
+                    ax = axes[i, j]
+                    contour = ax.contourf(X1, X2, model_out, levels=50, cmap='bwr')
+                    
+                    # Add zero level set contour
+                    zero_contour = ax.contour(X1, X2, model_out, levels=[0], colors='k', linewidths=2)
+                    ax.clabel(zero_contour, inline=True, fontsize=8)
+                    
+                    # Generate title based on which dimension is varied
+                    if hasattr(self, 'validation_slice_dim'):
+                        slice_name = state_names[self.validation_slice_dim]
+                        ax.set_title(f"t={t:.2f}, {slice_name}={slice_val:.2f}")
+                    else:
+                        # Create a title that shows all fixed values
+                        fixed_vals_str = ", ".join([f"{state_names[i+2]}={val:.2f}" 
+                                                   for i, val in enumerate(current_fixed_states)])
+                        ax.set_title(f"t={t:.2f}, {fixed_vals_str}")
+                    
+                    ax.set_xlabel(state_names[0])
+                    ax.set_ylabel(state_names[1])
+                    fig.colorbar(contour, ax=ax)
+            
         plt.tight_layout()
         filename = f'{self.Name}_val_epoch_{epoch:04d}.png'
         fig.savefig(os.path.join(ckpt_dir, filename))
         plt.close(fig)
-    
+
     def plot_final_model(self, model, save_dir, epsilon, save_file=None):
         """
         Plot final model results with epsilon adjustment.
         
-        Currently supports visualization for 1D and 2D state spaces.
-        For higher-dimensional systems, subclasses should override this method.
+        For 1D systems: Plots the value function directly
+        For 2D systems: Creates contour plots
+        For 3D+ systems: Creates contour plots of 2D slices with fixed values for other dimensions
         
         Args:
             model: Trained model
@@ -232,12 +323,6 @@ class DynamicalSystem:
             epsilon: Epsilon value for robustness adjustment
             save_file: File name for saved plot
         """
-        if self.NUM_STATES > 2:
-            logger.warning("Default plot_final_model() only supports 1D and 2D state spaces. "
-                          f"This system has {self.NUM_STATES} states. "
-                          "Consider implementing a custom plot_final_model() method.")
-            return
-            
         if save_file is None:
             save_file = f"{self.Name}_Final_Model_Comparison_With_Zero_Set.png"
         
@@ -250,7 +335,7 @@ class DynamicalSystem:
             fig, axes = plt.subplots(1, 2, figsize=(15, 6))
             
             X = state_range
-            time_coords = torch.ones_like(X.reshape(-1, 1)) * self.args.tMax
+            time_coords = torch.ones_like(X.reshape(-1, 1)) * self.args.t_max
             coords = torch.cat((time_coords, X.reshape(-1, 1)), dim=1).to(self.device)
             
             model_in = {'coords': coords}
@@ -282,7 +367,7 @@ class DynamicalSystem:
             X1, X2 = torch.meshgrid(state_range, state_range, indexing='ij')
             x1_flat = X1.reshape(-1, 1)
             x2_flat = X2.reshape(-1, 1)
-            time_coords = torch.ones_like(x1_flat) * self.args.tMax
+            time_coords = torch.ones_like(x1_flat) * self.args.t_max
             
             coords = torch.cat((time_coords, x1_flat, x2_flat), dim=1).to(self.device)
             model_in = {'coords': coords}
@@ -314,6 +399,91 @@ class DynamicalSystem:
             axes[2].set_xlabel(state_names[0])
             axes[2].set_ylabel(state_names[1])
             axes[2].legend(["Original", f"Epsilon-Adjusted ($\epsilon$={epsilon})"], loc="upper right")
+            
+        else:
+            # Higher-dimensional state spaces (n > 2)
+            # For systems with more than 2 states, we'll visualize 2D slices
+            
+            # Fixed values for states beyond the first two
+            # Default: all fixed values are 0.0
+            fixed_states = getattr(self, 'validation_fixed_states', [0.0] * (self.NUM_STATES - 2))
+            
+            # Use middle slice for final model plot
+            slice_val = 0.0
+            if hasattr(self, 'validation_slice_values') and len(self.validation_slice_values) > 0:
+                # Use middle slice from predefined values if available
+                middle_idx = len(self.validation_slice_values) // 2
+                slice_val = self.validation_slice_values[middle_idx]
+            
+            # Create the figure
+            fig, axes = plt.subplots(1, 3, figsize=(21, 6))
+            fig.suptitle(f"Value Function (ε={epsilon:.4f})")
+            
+            # Create a meshgrid for the first two states
+            X1, X2 = torch.meshgrid(state_range, state_range, indexing='ij')
+            x1_flat = X1.reshape(-1, 1)
+            x2_flat = X2.reshape(-1, 1)
+            
+            # Create constant values for time and remaining states
+            batch_size = x1_flat.shape[0]
+            time_coords = torch.ones(batch_size, 1) * self.args.t_max
+            
+            # Create coordinates for all states
+            state_tensors = [x1_flat, x2_flat]
+            
+            # If we have specific slice values, update fixed_states accordingly
+            current_fixed_states = fixed_states.copy()
+            if hasattr(self, 'validation_slice_dim'):
+                slice_dim = self.validation_slice_dim
+                if 0 <= slice_dim - 2 < len(current_fixed_states):
+                    current_fixed_states[slice_dim - 2] = slice_val
+            
+            # Add the fixed values for remaining states
+            for fixed_val in current_fixed_states:
+                state_tensors.append(torch.ones(batch_size, 1) * fixed_val)
+            
+            # Concatenate all states with time
+            coords = torch.cat([time_coords] + state_tensors, dim=1).to(self.device)
+            
+            # Get model output
+            model_in = {'coords': coords}
+            model_out = model(model_in)['model_out'].detach().cpu().numpy().reshape(X1.shape)
+            adjusted_model_out = model_out - epsilon
+            
+            # Generate title suffix showing fixed states
+            if hasattr(self, 'validation_slice_dim'):
+                slice_name = state_names[self.validation_slice_dim]
+                fixed_states_str = f"{slice_name}={slice_val:.2f}"
+            else:
+                fixed_states_str = ", ".join([f"{state_names[i+2]}={val:.2f}" 
+                                           for i, val in enumerate(current_fixed_states)])
+            
+            # Original Value Function
+            contour1 = axes[0].contourf(X1, X2, model_out, levels=50, cmap='bwr')
+            zero_level1 = axes[0].contour(X1, X2, model_out, levels=[0], colors='k', linewidths=2)
+            axes[0].clabel(zero_level1, inline=True, fontsize=8)
+            axes[0].set_title(f"Original Value ({fixed_states_str})")
+            axes[0].set_xlabel(state_names[0])
+            axes[0].set_ylabel(state_names[1])
+            fig.colorbar(contour1, ax=axes[0])
+            
+            # Epsilon-Adjusted Value Function
+            contour2 = axes[1].contourf(X1, X2, adjusted_model_out, levels=50, cmap='bwr')
+            zero_level2 = axes[1].contour(X1, X2, adjusted_model_out, levels=[0], colors='k', linewidths=2)
+            axes[1].clabel(zero_level2, inline=True, fontsize=8)
+            axes[1].set_title(f"Epsilon-Adjusted Value ({fixed_states_str})")
+            axes[1].set_xlabel(state_names[0])
+            axes[1].set_ylabel(state_names[1])
+            fig.colorbar(contour2, ax=axes[1])
+            
+            # Zero-Level Set Comparison
+            axes[2].contour(X1, X2, model_out, levels=[0], colors='b', linewidths=2, linestyles='--')
+            axes[2].contour(X1, X2, adjusted_model_out, levels=[0], colors='r', linewidths=2, linestyles='-')
+            axes[2].set_title(f"Zero-Level Set Comparison ({fixed_states_str})")
+            axes[2].set_xlabel(state_names[0])
+            axes[2].set_ylabel(state_names[1])
+            axes[2].legend(["Original", f"Epsilon-Adjusted"], loc="upper right")
+            axes[2].grid(True)
             
         plt.tight_layout()
         save_path = os.path.join(save_dir, save_file)

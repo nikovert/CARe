@@ -52,9 +52,9 @@ def parse_args():
                   help='Degree of polynomial features if used')
 
     # System Specific Settings
-    p.add_argument('--tMin', type=float, default=0.0,
+    p.add_argument('--t_min', type=float, default=0.0,
                   help='Minimum time for reachability analysis')
-    p.add_argument('--tMax', type=float, default=1.0,
+    p.add_argument('--t_max', type=float, default=1.0,
                   help='Maximum time for reachability analysis')
     p.add_argument('--input_max', type=float, default=1.0,
                   help='Maximum input magnitude for system')

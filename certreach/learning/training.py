@@ -158,9 +158,9 @@ def train(model: torch.nn.Module,
                 np.savetxt(checkpoints_dir / f'train_losses_epoch_{epoch:04d}.txt',
                           np.array(train_losses))
                 train_losses = []
-                _, tmax = curriculum.get_time_range()
+                _, t_max = curriculum.get_time_range()
                 if validation_fn is not None:
-                    validation_fn(model, checkpoints_dir, epoch, tmax=tmax)
+                    validation_fn(model, checkpoints_dir, epoch, t_max=t_max)
 
                 if device.type == 'cuda':
                     torch.cuda.empty_cache()
@@ -214,9 +214,9 @@ def train(model: torch.nn.Module,
                           f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}, "
                           f"Time: {time.time() - start_time:.3f}s")
                 curr_progress = curriculum.get_progress()
-                tmin, tmax = curriculum.get_time_range()
+                t_min, t_max = curriculum.get_time_range()
                 phase = "Pretraining" if curriculum.is_pretraining else "Curriculum"
-                tqdm.write(f"{phase} - Progress: {curr_progress:.2%}, Time range: [{tmin:.3f}, {tmax:.3f}]")
+                tqdm.write(f"{phase} - Progress: {curr_progress:.2%}, Time range: [{t_min:.3f}, {t_max:.3f}]")
 
             pbar.update(1)
 

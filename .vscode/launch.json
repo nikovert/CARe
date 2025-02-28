@@ -71,6 +71,43 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }
+        },
+        {
+            "name": "CEGIS Triple Integrator",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/main.py",
+            "args": [
+                "--example", "triple_integrator",
+                "--run_mode", "cegis",
+                "--logging_root", "./logs",
+                "--prune_after_initial",
+                "--use_polynomial",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "CEGIS Air3D",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/main.py",
+            "args": [
+                "--example", "air3d",
+                "--run_mode", "cegis",
+                "--model_type", "sine",
+                "--logging_root", "./logs",
+                "--prune_after_initial",
+                "--use_polynomial",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
         }
     ]
 }

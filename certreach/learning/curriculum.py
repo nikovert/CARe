@@ -32,8 +32,8 @@ class Curriculum:
     def step(self):
         """Update curriculum progress and dataset time range."""
         self.current_step += 1
-        tmin, tmax = self.get_time_range()
-        self.dataset.update_time_range(tmin, tmax)
+        t_min, t_max = self.get_time_range()
+        self.dataset.update_time_range(t_min, t_max)
     
     def get_progress(self) -> float:
         """Get current curriculum progress."""

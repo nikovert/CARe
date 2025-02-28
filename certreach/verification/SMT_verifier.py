@@ -146,8 +146,8 @@ class SMTVerifier:
         
         else:
             boundary_info = f"Boundary diff: {boundary_diff:.6f}, " if boundary_diff is not None else ""
-            logger.warning(f"Invalid counterexample: No violation exceeds epsilon={epsilon}")
             logger.warning(f"{boundary_info}PDE residual: {pde_residual:.6f}")
+            logger.error(f"Invalid counterexample: No violation exceeds epsilon={epsilon}")
         
         # Return detailed validation results
         return result

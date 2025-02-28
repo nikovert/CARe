@@ -20,6 +20,7 @@ dependencies = [
     "tqdm",
     "z3",
     "configargparse",
+    "ray"
 ]
 
 [tool.flake8]

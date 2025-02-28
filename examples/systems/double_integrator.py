@@ -17,9 +17,7 @@ def double_integrator_boundary(states, radius=sqrt(0.25)):
     if using_torch:
         return torch.norm(states, dim=1, keepdim=True)**2 - radius**2
     else:
-        # dReal mode - coords will be a list of variables [t, x, v]
         x, v = states[0], states[1]
-        # Manual computation of L2 norm for dReal
         return (x * x + v * v) - radius**2
 
 @register_example

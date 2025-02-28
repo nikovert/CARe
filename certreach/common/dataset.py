@@ -9,7 +9,7 @@ class ReachabilityDataset(Dataset):
     Base class for reachability analysis datasets.
     Implements common functionality for curriculum learning and data generation.
     """
-    def __init__(self, batch_size, tMin=0.0, tMax=1.0, 
+    def __init__(self, batch_size, t_min=0.0, t_max=1.0, 
                  seed=0, device=None,
                  counterexamples=None, percentage_in_counterexample=20,
                  percentage_at_t0=20, epsilon_radius=0.1,
@@ -19,8 +19,8 @@ class ReachabilityDataset(Dataset):
 
         Args:
             batch_size (int): Number of points to sample per batch
-            tMin (float): Minimum time value
-            tMax (float): Maximum time value
+            t_min (float): Minimum time value
+            t_max (float): Maximum time value
             seed (int): Random seed for reproducibility
             device (torch.device): Device to store tensors
             counterexamples (torch.Tensor, optional): Counterexample points [n, state_dim]
@@ -37,8 +37,8 @@ class ReachabilityDataset(Dataset):
         logger.debug(f"Initializing dataset with batch size {batch_size}")
 
         self.batch_size = batch_size
-        self.tMin = tMin
-        self.tMax = tMax
+        self.t_min = t_min
+        self.t_max = t_max
 
         if num_states is None:
             raise ValueError("num_states must be specified")
@@ -58,21 +58,21 @@ class ReachabilityDataset(Dataset):
         """Dataset length is always 1 as we generate data dynamically."""
         return 1
 
-    def update_time_range(self, tMin: float, tMax: float) -> None:
+    def update_time_range(self, t_min: float, t_max: float) -> None:
         """Update the time range for sampling."""
-        self.tMin = tMin
-        self.tMax = tMax
+        self.t_min = t_min
+        self.t_max = t_max
 
     def _get_time_samples(self):
         """Generate time samples using current time range."""
-        # Regular sampling between tMin and tMax
-        time = torch.zeros(self.batch_size, 1, device=self.device).uniform_(self.tMin, self.tMax)
+        # Regular sampling between t_min and t_max
+        time = torch.zeros(self.batch_size, 1, device=self.device).uniform_(self.t_min, self.t_max)
         
         # Ensure some samples at t=0 based on percentage_at_t0
         n_t0 = int(self.batch_size * self.percentage_at_t0 / 100)
-        time[-n_t0:, 0] = self.tMin
+        time[-n_t0:, 0] = self.t_min
         
-        return time, self.tMin
+        return time, self.t_min
 
     def _sample_near_counterexample(self, num_points):
         """
@@ -167,8 +167,8 @@ class ReachabilityDataset(Dataset):
             counterexample = counterexample.unsqueeze(0)
         
         if counterexample.size(1) == self.num_states:  # If only state variables provided
-            # Add time dimension initialized to tMax
-            time_dim = torch.full((counterexample.size(0), 1), self.tMax, device=self.device)
+            # Add time dimension initialized to t_max
+            time_dim = torch.full((counterexample.size(0), 1), self.t_max, device=self.device)
             counterexample = torch.cat([time_dim, counterexample], dim=1)
         
         # Add to existing counterexample if it exists, otherwise create new

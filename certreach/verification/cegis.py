@@ -84,8 +84,8 @@ class CEGISLoop:
         # Initialize dataset if not already existing
         self.dataset = ReachabilityDataset(
             batch_size=args.batch_size,
-            tMin=args.tMin,
-            tMax=args.tMax,
+            t_min=args.t_min,
+            t_max=args.t_max,
             seed=args.seed,
             device=self.device,  # Pass device explicitly
             num_states=example.NUM_STATES,  # Use the example's number of states
@@ -121,8 +121,8 @@ class CEGISLoop:
                 model_dir=self.example.root_path,
                 loss_fn=self.example.loss_fn,
                 pretrain_percentage=self.args.pretrain_percentage,
-                time_min=self.args.tMin,
-                time_max=self.args.tMax,
+                time_min=self.args.t_min,
+                time_max=self.args.t_max,
                 validation_fn=self.example.validate,
                 device=self.device,
                 is_finetuning=False  # Initial training is not fine-tuning
@@ -146,8 +146,8 @@ class CEGISLoop:
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
                     pretrain_percentage=0.0,  # No pretraining needed
-                    time_min=self.args.tMin,
-                    time_max=self.args.tMax,
+                    time_min=self.args.t_min,
+                    time_max=self.args.t_max,
                     validation_fn=self.example.validate,
                     device=self.device,
                     is_finetuning=True  # Retraining pruned model is fine-tuning
@@ -236,8 +236,8 @@ class CEGISLoop:
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
                     pretrain_percentage=0.0,  # No pretraining during fine-tuning
-                    time_min=self.args.tMin,
-                    time_max=self.args.tMax,
+                    time_min=self.args.t_min,
+                    time_max=self.args.t_max,
                     validation_fn=self.example.validate,
                     device=self.device,
                     is_finetuning=True,  # Set fine-tuning flag for counterexample training
