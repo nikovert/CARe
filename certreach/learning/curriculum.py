@@ -9,7 +9,6 @@ class Curriculum:
     DIRICHLET_WEIGHT = 1/15e2
     def __init__(self, 
                  dataset: ReachabilityDataset,
-                 pretrain_percentage: int,
                  total_steps: int,
                  time_min: float = 0.0,
                  time_max: float = 1.0,
@@ -18,31 +17,35 @@ class Curriculum:
             raise TypeError(f"Dataset must be ReachabilityDataset, got {type(dataset)}")
             
         self.dataset = dataset
-        self.pretrain_percentage = pretrain_percentage
         self.total_steps = total_steps
-        self.pretrain_steps = self.pretrain_percentage * self.total_steps
+        self.rollout = rollout
         self.time_min = time_min
         self.time_max = time_max
         self.current_step = 0
-        self.rollout = rollout
+        self.is_pretraining = True
     
     def __len__(self):
         return self.total_steps
 
-    def step(self):
+    def step(self, progress_flag: bool = False):
         """Update curriculum progress and dataset time range."""
-        self.current_step += 1
-        t_min, t_max = self.get_time_range()
-        self.dataset.update_time_range(t_min, t_max)
+        if progress_flag:
+            if self.is_pretraining:
+                logger.info("Pretraining finished, starting rollout.")
+                self.is_pretraining = False
+            else:
+                self.current_step += 1
+                t_min, t_max = self.get_time_range()
+                self.dataset.update_time_range(t_min, t_max)
     
     def get_progress(self) -> float:
         """Get current curriculum progress."""
         if not self.rollout:
             return 1.0
-        if self.current_step < self.pretrain_steps:
+        if self.is_pretraining:
             return 0.0
         else:
-            progress = 2*(self.current_step/self.total_steps - self.pretrain_percentage)/(1 - self.pretrain_percentage)
+            progress = self.current_step/self.total_steps
             return min(progress, 1.0)
 
     def get_time_range(self) -> tuple[float, float]:
@@ -50,10 +53,6 @@ class Curriculum:
         progress = self.get_progress()
         current_max = self.time_min + (self.time_max - self.time_min) * progress
         return self.time_min, current_max
-            
-    @property
-    def is_pretraining(self) -> bool:
-        return self.get_progress() == 0.0
     
     def get_loss_weights(self, batch_size) -> Dict[str, float]:
         """

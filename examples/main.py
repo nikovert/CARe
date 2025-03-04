@@ -32,10 +32,10 @@ def parse_args():
     # Training Settings
     p.add_argument('--batch_size', type=int, default=85000,
                   help='Number of points to sample per batch')
-    p.add_argument('--lr', type=float, default=2e-5,
+    p.add_argument('--lr', type=float, default=1e-4,
                   help='Learning rate for optimizer')
-    p.add_argument('--num_epochs', type=int, default=int(0.2*1e5),
-                  help='Number of training epochs')
+    p.add_argument('--num_epochs', type=int, default=int(1e5),
+                  help='Number of training epochs for curriculum training (1/10th of max iterations)')
     p.add_argument('--epochs_til_ckpt', type=int, default=int(5000),
                   help='Number of epochs between model checkpoints')
 
@@ -58,18 +58,16 @@ def parse_args():
                   help='Maximum time for reachability analysis')
     p.add_argument('--input_max', type=float, default=1.0,
                   help='Maximum input magnitude for system')
-    p.add_argument('--min_with', type=str, default='none', choices=['none', 'zero', 'target'],
+    p.add_argument('--min_with', type=str, default='none', choices=['none', 'target'],
                   help='Type of minimum operation to use in HJ reachability')
     p.add_argument('--reach_mode', type=str, default='forward', choices=['backward', 'forward'],
                   help='Direction of reachability computation')
     p.add_argument('--reach_aim', type=str, default='reach', choices=['avoid', 'reach'],
                   help='Whether to compute reach or avoid sets')
-    p.add_argument('--setType', type=str, default='set', choices=['set', 'tube'],
+    p.add_argument('--set_type', type=str, default='set', choices=['set', 'tube'],
                   help='Whether to compute reachable set or tube')
 
     # Training Process Settings
-    p.add_argument('--pretrain_percentage', type=float, default=0.1,
-                  help='Percentage of total steps to use for pretraining (0.0 to 1.0)')
     p.add_argument('--prune_after_initial', action='store_true', default=False,
                   help='Whether to prune the network after initial training phase')
     p.add_argument('--seed', type=int, default=0,

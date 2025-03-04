@@ -12,24 +12,24 @@ from ..common.dataset import ReachabilityDataset
 logger = logging.getLogger(__name__)
 
 def train(model: torch.nn.Module, 
-          dataset: ReachabilityDataset,  # Updated type hint
-          epochs: int, 
-          lr: float, 
-          epochs_til_checkpoint: int, 
+          dataset: ReachabilityDataset,
+          max_epochs: int, 
           model_dir: str, 
           loss_fn: Callable, 
-          pretrain_percentage: float = 0.01,  # Added curriculum parameters
+          epochs_til_checkpoint: int = 5000, 
+          curriculum_epochs: int = 0,
+          lr: float = 1e-4, 
           time_min: float = 0.0,
           time_max: float = 1.0,
-          clip_grad: bool = True, 
           validation_fn: Optional[Callable] = None, 
-          start_epoch: int = 0,
-                    device: Optional[torch.device] = None,
+          epsilon: float = 0.2,
+          device: Optional[torch.device] = None,
+          clip_grad: bool = True, 
           use_amp: bool = True,
-          l1_lambda: float = 1e-2,  # Changed default to 1e-4 for L1 regularization
-          weight_decay: float = 1e-2,  # Changed default to 1e-5 for L2 regularization
-          is_finetuning: bool = False,  # New parameter to indicate fine-tuning
-          momentum: float = 0.9,  # New parameter for momentum during fine-tuning
+          l1_lambda: float = 1e-2,
+          weight_decay: float = 1e-2,
+          is_finetuning: bool = False,
+          momentum: float = 0.9,
           **kwargs
           ) -> None:
     """
@@ -38,30 +38,42 @@ def train(model: torch.nn.Module,
     Args:
         model: Neural network model to train
         dataset: Dataset for training, must be a ReachabilityDataset instance
-        epochs: Total number of training epochs
-        lr: Learning rate for the Adam optimizer
+        max_epochs: Maximum number of training epochs
+        curriculum_epochs: Number of epochs to run the curriculum learning for
+        lr: Learning rate for the optimizer
         epochs_til_checkpoint: Number of epochs between saving checkpoints
-        model_dir: Directory to save model checkpoints and tensorboard logs
+        model_dir: Directory to save model checkpoints and logs
         loss_fn: Loss function that takes model output and ground truth as input
-        pretrain_percentage: Fraction of total epochs to spend in pretraining phase (0 to 1)
+        pretrain_percentage: Fraction of curriculum epochs to spend in pretraining phase (0 to 1)
         time_min: Minimum time value for curriculum learning
         time_max: Maximum time value for curriculum learning
-        clip_grad: Whether to clip gradients during training
         validation_fn: Optional function to run validation during checkpoints
-        start_epoch: Epoch to start or resume training from
+        epsilon: Stopping criterion threshold - stops if loss falls below this value and curriculum is complete
         device: Device to use for training (default: CUDA if available, else CPU)
-        l1_lambda: L1 regularization strength
-        weight_decay: L2 regularization strength
+        clip_grad: Whether to clip gradients during training (default: True)
+        use_amp: Whether to use automatic mixed precision (default: True for CUDA)
+        l1_lambda: L1 regularization strength (default: 1e-2)
+        weight_decay: L2 regularization strength (default: 1e-2)
+        is_finetuning: Whether this is a fine-tuning run (default: False)
+        momentum: Momentum parameter for SGD when fine-tuning (default: 0.9)
+        **kwargs: Additional arguments to pass to the optimizer
     
     Raises:
         TypeError: If dataset is not an instance of ReachabilityDataset
     
     Notes:
+        - Training uses different optimization strategies based on is_finetuning:
+          - Regular training: Adam optimizer
+          - Fine-tuning: SGD with momentum and learning rate scheduling
         - Uses curriculum learning with two phases:
           1. Pretraining phase: Trains on a subset of time values
           2. Curriculum phase: Gradually increases the time range
-        - Saves checkpoints periodically and logs metrics to tensorboard
+        - Stopping criteria:
+          - Early stopping during fine-tuning if loss plateaus
+          - Stopping if loss falls below epsilon and curriculum is complete
+        - Saves checkpoints periodically and logs metrics
         - Supports automatic mixed precision training on CUDA devices
+        - Applies both L1 and L2 regularization to prevent overfitting
     """
     if not isinstance(dataset, ReachabilityDataset):
         raise TypeError(f"Dataset must be an instance of ReachabilityDataset, got {type(dataset)}")
@@ -110,24 +122,11 @@ def train(model: torch.nn.Module,
     # Initialize curriculum
     curriculum = Curriculum(
         dataset=dataset,
-        pretrain_percentage=pretrain_percentage,
-        total_steps=epochs,
+        total_steps=curriculum_epochs,
         time_min=time_min,
         time_max=time_max,
         rollout=not is_finetuning  # Disable rollout during fine-tuning
     )
-
-    # Load the checkpoint if required
-    if start_epoch > 0:
-        try:
-            model_path = Path(model_dir) / 'checkpoints' / f'model_epoch_{start_epoch:04d}.pth'
-            model.load_checkpoint(model_path)
-            model.train()
-            logger.info(f"Loaded checkpoint from epoch {start_epoch}")
-        except FileNotFoundError:
-            logger.error(f"Checkpoint file not found: {model_path}")
-        except Exception as e:
-            logger.error(f"Error loading checkpoint: {e}")
 
     # Make sure all path operations use Path consistently
     model_dir = Path(model_dir)
@@ -136,27 +135,33 @@ def train(model: torch.nn.Module,
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     model.checkpoint_dir = checkpoints_dir  # Set checkpoint directory for model
 
-    with tqdm(total=epochs) as pbar:
+    with tqdm(total=curriculum_epochs) as pbar:
         train_losses = []
         best_loss = float('inf')
         patience_counter = 0
-        
-        for epoch in range(start_epoch, epochs): 
+        stopping_flag = False
+        progress_flag = False # Flag to indicate if curriculum should procude forward
+        for epoch in range(0, max_epochs): 
             start_time = time.time()
             # Update curriculum scheduler epoch at the start of each epoch
-            curriculum.step()
+            curriculum.step(progress_flag)
             
-            if epoch % epochs_til_checkpoint == 0 and epoch > 0:
+            if stopping_flag or epoch % epochs_til_checkpoint == 0:
                 # Save periodic checkpoint using model's method
+                if stopping_flag:
+                    name = 'model_final'
+                    np.savetxt(checkpoints_dir / f'train_losses_final.txt',
+                            np.array(train_losses))
+                else:
+                    name='model_current'
+                    np.savetxt(checkpoints_dir / f'train_losses_epoch_{epoch:04d}.txt',
+                            np.array(train_losses))
+                    
                 model.save_checkpoint(
-                    name='model_current',
+                    name=name,
                     optimizer=optim,
                     epoch=epoch
                 )
-                
-                # Save losses separately for analysis
-                np.savetxt(checkpoints_dir / f'train_losses_epoch_{epoch:04d}.txt',
-                          np.array(train_losses))
                 train_losses = []
                 _, t_max = curriculum.get_time_range()
                 if validation_fn is not None:
@@ -164,6 +169,10 @@ def train(model: torch.nn.Module,
 
                 if device.type == 'cuda':
                     torch.cuda.empty_cache()
+                    
+                if stopping_flag:
+                    logger.info("Training stopped as loss is below epsilon and curriculum is complete")
+                    break
 
             # Get a fresh batch of data
             model_input, gt = dataset.get_batch()
@@ -192,6 +201,16 @@ def train(model: torch.nn.Module,
                         l1_loss += F.l1_loss(param, torch.zeros_like(param), reduction='sum')
                     train_loss += l1_lambda * l1_loss
 
+            dichlet_condition_SAT = losses['dirichlet']/(dataset.percentage_at_t0/100 * batch_size) < epsilon
+            diff_constraint_SAT = losses['diff_constraint_hom']/batch_size < epsilon # Would need to be adapted if time hoizon is not 1
+
+            if dichlet_condition_SAT and (curriculum.is_pretraining or diff_constraint_SAT):
+                progress_flag = True
+                if curriculum.get_progress() == 1.0:
+                    stopping_flag = epoch > 1000  # Stop after minimum of 1000 epochs
+            else:
+                progress_flag = False
+
             if scaler is not None:
                 scaler.scale(train_loss).backward()
                 if clip_grad:
@@ -207,8 +226,8 @@ def train(model: torch.nn.Module,
 
             train_losses.append(train_loss.item())
 
-            # # Report progress every 100 epochs or 1/1000th of total epochs, whichever is smaller
-            if epoch % max(100,(epochs //1000)) == 0:
+            # Report progress
+            if epoch % epochs_til_checkpoint/10 == 0:
                 tqdm.write(f"Epoch {epoch}, Total Loss: {train_loss:.6f},"
                           f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
                           f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}, "
@@ -248,7 +267,7 @@ def train(model: torch.nn.Module,
         model.save_checkpoint(
             name='model_final',
             optimizer=optim,
-            epoch=epochs,
+            epoch=max_epochs,
             training_completed=True
         )
 

@@ -40,8 +40,8 @@ class Air3D(DynamicalSystem):
         
         # Air3D specific parameters
         self.velocity = args.velocity if hasattr(args, 'velocity') else 0.6
-        self.omega_max = args.omega_max if hasattr(args, 'omega_max') else 1.1
-        self.collision_radius = args.collision_radius if hasattr(args, 'collision_radius') else 0.25
+        self.omega_max = args.omega_max if hasattr(args, 'omega_max') else 1.0
+        self.collision_radius = args.collision_radius if hasattr(args, 'collision_radius') else sqrt(0.25)
         self.alpha_angle = args.alpha_angle if hasattr(args, 'alpha_angle') else 1.0
         
         # Set input bounds

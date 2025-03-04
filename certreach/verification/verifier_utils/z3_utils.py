@@ -27,11 +27,26 @@ def parse_counterexample(model: z3.Model):
     return counterexample
 
 def verify_with_z3(z3_value_fn, z3_partials, z3_variables, compute_hamiltonian, compute_boundary, epsilon=0.5,
-                   reachMode='forward', setType='set', save_directory="./", additional_constraints=None):
+                   reach_mode='forward', reach_aim='avoid', min_with='none', set_type='set', save_directory="./", additional_constraints=None):
     """
     Verify the HJB equation using Z3.
     
-    Follows a similar structure to dReal's verification.
+    Parameters:
+        z3_value_fn: The Z3 expression for the value function
+        z3_partials: Dictionary of Z3 expressions for partial derivatives
+        z3_variables: Dictionary of Z3 variables
+        compute_hamiltonian: Function to compute the Hamiltonian
+        compute_boundary: Function to compute boundary values
+        epsilon: Verification tolerance
+        reach_mode: 'forward' (default) or 'backward' reach set computation
+        reach_aim: 'avoid' (default) or 'reach' computation goal
+        min_with: Minimum value computation method ('none', 'zero', or 'target')
+        set_type: 'set' (default) or 'tube' for target set type
+        save_directory: Directory to save verification results
+        additional_constraints: Additional Z3 constraints to include
+    
+    Returns:
+        tuple: (success, counterexample)
     """
     # Extract time variable (assume key "x_1_1")
     t = z3_variables["x_1_1"]
@@ -46,14 +61,14 @@ def verify_with_z3(z3_value_fn, z3_partials, z3_variables, compute_hamiltonian, 
     dv_dt = z3_partials["partial_x_1_1"]
     
     hamiltonian_value = compute_hamiltonian(state_vars, partials, func_map)
-    if reachMode == 'backward':
+    if reach_mode == 'backward':
         hamiltonian_value = -hamiltonian_value
 
     # Define Z3 constraints using z3.Abs for absolute values
     condition_1 = z3.Abs(dv_dt + hamiltonian_value) <= epsilon
     condition_2 = z3.Abs(dv_dt) <= epsilon
 
-    derivative_condition = z3.Not(z3.And(condition_1, condition_2)) if setType=='tube' else z3.Not(condition_1)
+    derivative_condition = z3.Not(z3.And(condition_1, condition_2)) if set_type=='tube' else z3.Not(condition_1)
     
     boundary_value = compute_boundary(state_vars)
     boundary_condition = z3.Abs(z3_value_fn - boundary_value) > epsilon

@@ -115,17 +115,18 @@ class CEGISLoop:
             train(
                 model=self.example.model,
                 dataset=self.dataset,
-                epochs=self.args.num_epochs,
+                max_epochs=10*self.args.num_epochs,
+                curriculum_epochs=self.args.num_epochs,
                 lr=self.args.lr,
                 epochs_til_checkpoint=self.args.epochs_til_ckpt,
                 model_dir=self.example.root_path,
                 loss_fn=self.example.loss_fn,
-                pretrain_percentage=self.args.pretrain_percentage,
                 time_min=self.args.t_min,
                 time_max=self.args.t_max,
                 validation_fn=self.example.validate,
                 device=self.device,
-                is_finetuning=False  # Initial training is not fine-tuning
+                is_finetuning=False,  # Initial training is not fine-tuning
+                epsilon=self.current_epsilon  # Pass current epsilon value
             )
             self.last_training_time = time.time() - train_start
             
@@ -140,17 +141,19 @@ class CEGISLoop:
                 train(
                     model=self.example.model,
                     dataset=self.dataset,
-                    epochs=self.args.num_epochs // 2,  # Shorter training period for fine-tuning
+                    max_epochs=10*self.args.num_epochs,  # Shorter training period for fine-tuning
+                    curriculum_epochs=self.args.num_epochs // 2,  # Also reduce curriculum epochs
                     lr=self.args.lr * 0.5,  # Lower learning rate for fine-tuning
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
-                    pretrain_percentage=0.0,  # No pretraining needed
                     time_min=self.args.t_min,
                     time_max=self.args.t_max,
                     validation_fn=self.example.validate,
                     device=self.device,
-                    is_finetuning=True  # Retraining pruned model is fine-tuning
+                    is_finetuning=True,  # Retraining pruned model is fine-tuning
+                    momentum=0.9,  # Add momentum for fine-tuning
+                    epsilon=self.current_epsilon  # Pass current epsilon value
                 )
                 self.last_training_time += time.time() - train_start
 
@@ -162,8 +165,10 @@ class CEGISLoop:
             system_specifics = {
                 'name': self.example.Name,
                 'root_path': self.example.root_path,
-                'reachMode': getattr(self.example, 'reachMode', 'forward'),
-                'setType': getattr(self.example, 'setType', 'set'),
+                'reach_mode': getattr(self.example, 'reach_mode', 'forward'),
+                'reach_aim': getattr(self.example, 'reach_aim', 'avoid'),
+                'min_with': getattr(self.example, 'min_with', 'none'),
+                'set_type': getattr(self.example, 'set_type', 'set'),
                 'additional_constraints': getattr(self.example, 'additional_constraints', None)
             }
             
@@ -230,18 +235,19 @@ class CEGISLoop:
                 train(
                     model=self.example.model,
                     dataset=self.dataset,
-                    epochs=self.fine_tune_epochs,
+                    max_epochs=self.fine_tune_epochs,
+                    curriculum_epochs=0,  # No curriculum for counterexample training
                     lr=self.fine_tune_lr,
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
-                    pretrain_percentage=0.0,  # No pretraining during fine-tuning
                     time_min=self.args.t_min,
                     time_max=self.args.t_max,
                     validation_fn=self.example.validate,
                     device=self.device,
                     is_finetuning=True,  # Set fine-tuning flag for counterexample training
-                    momentum=0.9  # Add momentum for fine-tuning
+                    momentum=0.9,  # Add momentum for fine-tuning
+                    epsilon=self.current_epsilon  # Pass current epsilon value
                 )
                 self.last_training_time = time.time() - train_start
                 self.current_symbolic_model = None  # Reset symbolic model after training

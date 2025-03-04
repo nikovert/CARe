@@ -48,12 +48,16 @@ def parse_counterexample(result_str):
     return counterexample
 
 def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5, delta = 0.001,
-                      reachMode='forward', setType='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
+                      reach_mode='forward', reach_aim='avoid', min_with='none', set_type='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
     """
     Verifies if the HJB equation holds using dReal for a double integrator system.
     
     Parameters:
       ...
+      reach_mode (str): 'forward' (default) or 'backward' for reach set computation
+      reach_aim (str): 'avoid' (default) or 'reach' computation goal
+      min_with (str): Specifies minimum value computation method ('none', 'zero', or 'target')
+      set_type (str): 'set' (default) or 'tube' for target set type
       execution_mode (str): "parallel" (default) runs constraint checks concurrently,
                             "sequential" runs the boundary and derivative checks in sequence while timing each.
     """
@@ -73,18 +77,16 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     # Use class method for Hamiltonian computation
     hamiltonian_value = compute_hamiltonian(state_vars, partials, func_map)
 
-    if reachMode == 'backward':
+    if reach_mode == 'backward':
         hamiltonian_value = -hamiltonian_value
 
     # Define derivative constraints
     condition_1 = abs(dv_dt + hamiltonian_value) <= epsilon
+    derivative_condition = Not(condition_1)
+
     condition_2 = abs(dv_dt) <= epsilon
-
-    if setType=='tube': # this can be parallelized
-        derivative_condition = Not(And(condition_1, condition_2))
-    else:
-        derivative_condition = Not(condition_1)
-
+    tube_condition = Not(condition_2)
+        
     # Define boundary constraints (assuming T=1)
     boundary_value = compute_boundary(state_vars)
     boundary_condition = abs(d_real_value_fn - boundary_value) > epsilon
@@ -104,9 +106,11 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     if additional_constraints:
         boundary_constraints = And(boundary_condition, initial_state_constraints, *additional_constraints)
         derivative_constraints = And(derivative_condition, state_constraints, *additional_constraints)
+        tube_constraints = And(tube_condition, state_constraints, *additional_constraints)
     else:
         boundary_constraints = And(boundary_condition, initial_state_constraints)
         derivative_constraints = And(derivative_condition, state_constraints)
+        tube_constraints = And(tube_condition, state_constraints)
     
     result = None
     timing_info = {}
@@ -115,10 +119,17 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
         logger.info("Starting parallel constraint checks...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             logger.debug("Submitting boundary and derivative constraint checks")
-            futures = [
-                executor.submit(_check_constraint, boundary_constraints, delta),
-                executor.submit(_check_constraint, derivative_constraints, delta)
-            ]
+            if set_type == 'tube':
+                futures = [
+                    executor.submit(_check_constraint, tube_constraints, delta),
+                    executor.submit(_check_constraint, derivative_constraints, delta),
+                    executor.submit(_check_constraint, boundary_constraints, delta)
+                ]
+            else:
+                futures = [
+                    executor.submit(_check_constraint, boundary_constraints, delta),
+                    executor.submit(_check_constraint, derivative_constraints, delta)
+                ]
             for future in concurrent.futures.as_completed(futures):
                 res = future.result()
                 if res:
@@ -145,6 +156,15 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
             timing_info["derivative_time"] = derivative_time
             logger.info(f"Derivative check completed in {derivative_time:.4f} seconds.")
             result = derivative_result
+        if derivative_result:
+            result = derivative_result
+        elif set_type == 'tube':
+            start_tube = time.monotonic()
+            tube_result = _check_constraint(tube_constraints, delta)
+            tube_time = time.monotonic() - start_tube
+            timing_info["tube_time"] = tube_time
+            logger.info(f"Tube check completed in {tube_time:.4f} seconds.")
+            result = tube_result
     else:
         logger.error(f"Unknown execution_mode: {execution_mode}.")
     

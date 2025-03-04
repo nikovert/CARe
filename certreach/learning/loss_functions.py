@@ -12,20 +12,22 @@ class HJILossFunction:
         hamiltonian_fn: Optional[Callable] = None,
         min_with: str = 'none',
         reach_mode: str = 'backward',
-        reach_aim: str = 'reach'
+        reach_aim: str = 'reach',
+        set_type: str = 'set'
     ):
         """
         Initialize the HJI Loss Function.
         
         Args:
             hamiltonian_fn: Function to compute the Hamiltonian
-            min_with: Type of min operation to use ('none', 'zero', or 'target')
+            min_with: Type of min operation to use ('none', 'target')
             reach_mode: Direction of reachability analysis ('backward' or 'forward')
             reach_aim: Aim of reachability analysis ('reach' or 'avoid')
         """
         self.min_with = min_with
         self.reach_mode = reach_mode
         self.reach_aim = reach_aim
+        self.set_type = set_type
         self._hamiltonian_fn = hamiltonian_fn
     
     def compute_hamiltonian(self, x, p, Abs: Callable = abs) -> torch.Tensor:
@@ -84,7 +86,7 @@ class HJILossFunction:
 
     def _apply_minimization_constraint(self, ham):
         """Apply minimization constraint to Hamiltonian."""
-        if self.min_with == 'zero':
+        if self.set_type == 'tube':
             ham = torch.clamp(ham, max=0.0)
         return ham
 

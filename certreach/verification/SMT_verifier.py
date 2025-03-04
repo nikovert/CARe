@@ -147,7 +147,7 @@ class SMTVerifier:
         else:
             boundary_info = f"Boundary diff: {boundary_diff:.6f}, " if boundary_diff is not None else ""
             logger.warning(f"{boundary_info}PDE residual: {pde_residual:.6f}")
-            logger.error(f"Invalid counterexample: No violation exceeds epsilon={epsilon}")
+            raise ValueError(f"Invalid counterexample: No violation exceeds epsilon={epsilon}")
         
         # Return detailed validation results
         return result
@@ -204,8 +204,10 @@ class SMTVerifier:
                 compute_boundary=compute_boundary,
                 epsilon=epsilon,
                 delta=self.delta,
-                reachMode=system_specifics.get('reachMode', 'forward'),
-                setType=system_specifics.get('setType', 'set'),
+                reach_mode=system_specifics.get('reach_mode', 'forward'),
+                reach_aim=system_specifics.get('reach_aim', 'avoid'),
+                min_with=system_specifics.get('min_with', 'none'),
+                set_type=system_specifics.get('set_type', 'set'),
                 save_directory=system_specifics['root_path'],
                 execution_mode="parallel",  # Use sequential for better timing info
                 additional_constraints=system_specifics.get('additional_constraints', None)
@@ -236,8 +238,10 @@ class SMTVerifier:
                 compute_hamiltonian=compute_hamiltonian,
                 compute_boundary=compute_boundary,
                 epsilon=epsilon,
-                reachMode=system_specifics.get('reachMode', 'forward'),
-                setType=system_specifics.get('setType', 'set'),
+                reach_mode=system_specifics.get('reach_mode', 'forward'),
+                reach_aim=system_specifics.get('reach_aim', 'avoid'),
+                min_with=system_specifics.get('min_with', 'none'),
+                set_type=system_specifics.get('set_type', 'set'),
                 save_directory=system_specifics['root_path'],
                 additional_constraints=system_specifics.get('additional_constraints', None)
             )
