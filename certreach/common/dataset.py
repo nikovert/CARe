@@ -106,7 +106,8 @@ class ReachabilityDataset(Dataset):
         if self.num_states is None:
             raise ValueError("Child class must set self.num_states in __init__")
         
-        return torch.zeros(num_points, self.num_states, device=self.device).uniform_(-1, 1)
+        # Sample points making sure to cover slightly more than the domain of interest [-1, 1]
+        return torch.zeros(num_points, self.num_states, device=self.device).uniform_(-1.01, 1.01)
 
     def __getitem__(self, idx):
         """Get samples using current time range."""
