@@ -45,6 +45,7 @@ class DynamicalSystem:
         self.min_with = args.min_with if hasattr(args, 'min_with') else 'none'
         self.reach_mode = args.reach_mode if hasattr(args, 'reach_mode') else 'backward'
         self.reach_aim = args.reach_aim if hasattr(args, 'reach_aim') else 'reach'
+        self.set_type = args.set_type if hasattr(args, 'set_type') else 'set'
         
     def initialize_components(self):
         """
@@ -79,7 +80,8 @@ class DynamicalSystem:
             hamiltonian_fn=self.compute_hamiltonian,
             min_with=self.min_with, 
             reach_mode=self.reach_mode, 
-            reach_aim=self.reach_aim
+            reach_aim=self.reach_aim,
+            set_type=self.set_type
         )
         
         return loss_function.compute_loss
