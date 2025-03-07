@@ -48,15 +48,14 @@ def parse_counterexample(result_str):
     return counterexample
 
 def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5, delta = 0.001,
-                      reach_mode='forward', reach_aim='avoid', min_with='none', set_type='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
+                      reach_mode='forward', min_with='none', set_type='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
     """
     Verifies if the HJB equation holds using dReal for a double integrator system.
     
     Parameters:
       ...
       reach_mode (str): 'forward' (default) or 'backward' for reach set computation
-      reach_aim (str): 'avoid' (default) or 'reach' computation goal
-      min_with (str): Specifies minimum value computation method ('none', 'zero', or 'target')
+      min_with (str): Specifies minimum value computation method ('none', or 'target')
       set_type (str): 'set' (default) or 'tube' for target set type
       execution_mode (str): "parallel" (default) runs constraint checks concurrently,
                             "sequential" runs the boundary and derivative checks in sequence while timing each.
@@ -77,20 +76,12 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     # Use class method for Hamiltonian computation
     hamiltonian_value = compute_hamiltonian(state_vars, partials, func_map)
 
+    if set_type == 'tube': # This could also be improved with parallelisation
+        hamiltonian_value = dreal.Max(hamiltonian_value, 0)
+
     if reach_mode == 'backward':
         hamiltonian_value = -hamiltonian_value
 
-    # Define derivative constraints
-    condition_1 = abs(dv_dt + hamiltonian_value) <= epsilon
-    derivative_condition = Not(condition_1)
-
-    condition_2 = abs(dv_dt) <= epsilon
-    tube_condition = Not(condition_2)
-        
-    # Define boundary constraints (assuming T=1)
-    boundary_value = compute_boundary(state_vars)
-    boundary_condition = abs(d_real_value_fn - boundary_value) > epsilon
-                              
     # Define State constraints
     state_constraints = And(
         t >= 0, t <= 1,
@@ -102,33 +93,73 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
         *[And(var >= -1, var <= 1) for var in state_vars]
     )
 
+    # Define boundary constraints (assuming T=1)
+    boundary_value = compute_boundary(state_vars)
+    boundary_condition_1 = d_real_value_fn - boundary_value > epsilon
+    boundary_condition_2 = d_real_value_fn - boundary_value < -epsilon
+
+    if min_with == 'target':
+        # || max[dv_dt + H, V(x) - g(x)] || <= epsilon
+        # => [dv_dt + H >= -epsilon OR V(x) - g(x) >= -epsilon]
+        #    AND [dv_dt + H <= epsilon AND V(x) - g(x) <= epsilon]
+        #
+        # To check:
+        #       [dv_dt + H < - epsilon AND V(x) - g(x) < -epsilon]
+        #    OR dv_dt + H > epsilon 
+        #    OR V(x) - g(x) > epsilon (same as boundary_condition_1)
+        target_condition_1 = And(dv_dt + hamiltonian_value < -epsilon, boundary_condition_2)
+        target_condition_2 = dv_dt + hamiltonian_value > epsilon
+        target_condition_3 = boundary_condition_1
+    else:
+        # Define derivative constraints
+        derivative_condition_1 = dv_dt + hamiltonian_value < -epsilon
+        derivative_condition_2 = dv_dt + hamiltonian_value > epsilon
+
+
     # Combine constraints
     if additional_constraints:
-        boundary_constraints = And(boundary_condition, initial_state_constraints, *additional_constraints)
-        derivative_constraints = And(derivative_condition, state_constraints, *additional_constraints)
-        tube_constraints = And(tube_condition, state_constraints, *additional_constraints)
+        boundary_constraints_2 = And(boundary_condition_2, initial_state_constraints, *additional_constraints)
+        # boundary_condition_1 can be ommited as it is included in target_condition_3
+        if min_with == 'target':
+            target_constraints_1 = And(target_condition_1, state_constraints, *additional_constraints)
+            target_constraints_2 = And(target_condition_2, state_constraints, *additional_constraints)
+            target_constraints_3 = And(target_condition_3, state_constraints, *additional_constraints)
+        else:
+            derivative_constraints_1 = And(derivative_condition_1, state_constraints, *additional_constraints)
+            derivative_constraints_2 = And(derivative_condition_2, state_constraints, *additional_constraints)
+            boundary_constraints_1 = And(boundary_condition_1, initial_state_constraints, *additional_constraints)
     else:
-        boundary_constraints = And(boundary_condition, initial_state_constraints)
-        derivative_constraints = And(derivative_condition, state_constraints)
-        tube_constraints = And(tube_condition, state_constraints)
+        boundary_constraints_2 = And(boundary_condition_2, initial_state_constraints)
+        # boundary_condition_1 can be ommited as it is included in target_condition_3
+        if min_with == 'target':
+            target_constraints_1 = And(target_condition_1, state_constraints)
+            target_constraints_2 = And(target_condition_2, state_constraints)
+            target_constraints_3 = And(target_condition_3, state_constraints)
+        else:
+            derivative_constraints_1 = And(derivative_condition_1, state_constraints)
+            derivative_constraints_2 = And(derivative_condition_2, state_constraints)
+            boundary_constraints_1 = And(boundary_condition_1, initial_state_constraints)
     
     result = None
     timing_info = {}
     
     if execution_mode == "parallel":
         logger.info("Starting parallel constraint checks...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             logger.debug("Submitting boundary and derivative constraint checks")
-            if set_type == 'tube':
+            if min_with == 'target':
                 futures = [
-                    executor.submit(_check_constraint, tube_constraints, delta),
-                    executor.submit(_check_constraint, derivative_constraints, delta),
-                    executor.submit(_check_constraint, boundary_constraints, delta)
+                    executor.submit(_check_constraint, target_constraints_1, delta),
+                    executor.submit(_check_constraint, target_constraints_2, delta),
+                    executor.submit(_check_constraint, target_constraints_3, delta),
+                    executor.submit(_check_constraint, boundary_constraints_2, delta)
                 ]
             else:
                 futures = [
-                    executor.submit(_check_constraint, boundary_constraints, delta),
-                    executor.submit(_check_constraint, derivative_constraints, delta)
+                    executor.submit(_check_constraint, derivative_constraints_1, delta),
+                    executor.submit(_check_constraint, derivative_constraints_2, delta),
+                    executor.submit(_check_constraint, boundary_constraints_1, delta),
+                    executor.submit(_check_constraint, boundary_constraints_2, delta)
                 ]
             for future in concurrent.futures.as_completed(futures):
                 res = future.result()
@@ -142,29 +173,72 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
         logger.info("Parallel constraint checks completed.")
     elif execution_mode == "sequential":
         logger.info("Starting sequential constraint checks with timing...")
-        start_boundary = time.monotonic()
-        boundary_result = _check_constraint(boundary_constraints, delta)
-        boundary_time = time.monotonic() - start_boundary
-        timing_info["boundary_time"] = boundary_time
-        logger.info(f"Boundary check completed in {boundary_time:.4f} seconds.")
+        
+        # Check boundary constraints first
+        start_boundary1 = time.monotonic()
+        boundary_result1 = _check_constraint(boundary_constraints_1, delta)
+        boundary_time1 = time.monotonic() - start_boundary1
+        timing_info["boundary_time1"] = boundary_time1
+        logger.info(f"Boundary check 1 completed in {boundary_time1:.4f} seconds.")
+        
+        start_boundary2 = time.monotonic()
+        boundary_result2 = _check_constraint(boundary_constraints_2, delta)
+        boundary_time2 = time.monotonic() - start_boundary2
+        timing_info["boundary_time2"] = boundary_time2
+        logger.info(f"Boundary check 2 completed in {boundary_time2:.4f} seconds.")
+        
+        boundary_result = boundary_result1 or boundary_result2
+        
         if boundary_result:
             result = boundary_result
+            logger.info("Found counterexample in boundary condition check.")
         else:
-            start_derivative = time.monotonic()
-            derivative_result = _check_constraint(derivative_constraints, delta)
-            derivative_time = time.monotonic() - start_derivative
-            timing_info["derivative_time"] = derivative_time
-            logger.info(f"Derivative check completed in {derivative_time:.4f} seconds.")
-            result = derivative_result
-        if derivative_result:
-            result = derivative_result
-        elif set_type == 'tube':
-            start_tube = time.monotonic()
-            tube_result = _check_constraint(tube_constraints, delta)
-            tube_time = time.monotonic() - start_tube
-            timing_info["tube_time"] = tube_time
-            logger.info(f"Tube check completed in {tube_time:.4f} seconds.")
-            result = tube_result
+            if min_with == 'target':
+                # Check the three target constraints sequentially
+                logger.info("Checking target min_with constraints...")
+                
+                # Check condition 1
+                start_target1 = time.monotonic()
+                target_result1 = _check_constraint(target_constraints_1, delta)
+                target_time1 = time.monotonic() - start_target1
+                timing_info["target_condition1_time"] = target_time1
+                logger.info(f"Target condition 1 check completed in {target_time1:.4f} seconds.")
+                
+                # Check condition 2
+                start_target2 = time.monotonic()
+                target_result2 = _check_constraint(target_constraints_2, delta)
+                target_time2 = time.monotonic() - start_target2
+                timing_info["target_condition2_time"] = target_time2
+                logger.info(f"Target condition 2 check completed in {target_time2:.4f} seconds.")
+                
+                # Check condition 3
+                start_target3 = time.monotonic()
+                target_result3 = _check_constraint(target_constraints_3, delta)
+                target_time3 = time.monotonic() - start_target3
+                timing_info["target_condition3_time"] = target_time3
+                logger.info(f"Target condition 3 check completed in {target_time3:.4f} seconds.")
+                
+                # Combine results
+                result = target_result1 or target_result2 or target_result3
+                if result:
+                    logger.info("Found counterexample in target condition check.")
+            else:
+                # Check derivative constraints
+                start_derivative1 = time.monotonic()
+                derivative_result1 = _check_constraint(derivative_constraints_1, delta)
+                derivative_time1 = time.monotonic() - start_derivative1
+                timing_info["derivative_time1"] = derivative_time1
+                logger.info(f"Derivative check 1 completed in {derivative_time1:.4f} seconds.")
+                
+                start_derivative2 = time.monotonic()
+                derivative_result2 = _check_constraint(derivative_constraints_2, delta)
+                derivative_time2 = time.monotonic() - start_derivative2
+                timing_info["derivative_time2"] = derivative_time2
+                logger.info(f"Derivative check 2 completed in {derivative_time2:.4f} seconds.")
+                
+                result = derivative_result1 or derivative_result2
+                if result:
+                    logger.info("Found counterexample in derivative condition check.")
     else:
         logger.error(f"Unknown execution_mode: {execution_mode}.")
     
@@ -330,7 +404,7 @@ def sympy_to_dreal_converter(syms: dict, exp: sympy.Expr, to_number=lambda x: fl
             #return Or(And(arg1 > arg2, arg1), And(arg1 <= arg2, arg2))
             return dreal.Max(arg1, arg2)
         else:  # Min(a,b) = (a < b AND a) OR (a >= b AND b)
-            #return Or(And(arg1 < arg2, arg1), And(arg1 >= arg2, arg2))
+            #return Or(And(arg1 < arg2, arg1), And(arg1 >= b, arg2))
             return dreal.Min(arg1, arg2)
 
     # Raise an error if the term is unsupported
