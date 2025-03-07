@@ -28,6 +28,8 @@ def parse_args():
                   help='Root directory for logging')
     p.add_argument('--experiment_name', type=str, default="Double_integrator",
                   help='Name of the experiment for logging purposes')
+    p.add_argument('--load_model', action='store_true', default=False,
+                  help='Whether to load model from previous experiment')
 
     # Training Settings
     p.add_argument('--batch_size', type=int, default=85000,
@@ -170,7 +172,7 @@ def main():
 
     # Try to load model from previous experiment folder if it exists
     loaded_model = False
-    if prev_folder_path:
+    if prev_folder_path and args.load_model:
         loaded_model = load_model_from_folder(example, prev_folder_path)
 
     # Print model information
