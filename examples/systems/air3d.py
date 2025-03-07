@@ -72,9 +72,9 @@ class Air3D(DynamicalSystem):
 
             # Control input term based on reach/avoid
             if self.reach_aim == 'avoid':
-                ham -= self.omega_max * torch.abs(p_x*pos_y  - p_y*pos_x - p_theta) - self.omega_max * p_theta # Maximize angular velocity
+                ham += self.omega_max * torch.abs(p_x*pos_y  - p_y*pos_x - p_theta) - self.omega_max * p_theta # Maximize angular velocity
             else:  # reach
-                ham += self.omega_max * torch.abs(p_x*pos_y  - p_y*pos_x - p_theta) - self.omega_max * p_theta  # Minimize angular velocity
+                ham -= self.omega_max * torch.abs(p_x*pos_y  - p_y*pos_x - p_theta) - self.omega_max * p_theta  # Minimize angular velocity
         else:
             # symbolic computation
             pos_x, pos_y = x[0], x[1]
@@ -85,13 +85,9 @@ class Air3D(DynamicalSystem):
             ham = p_x * (-ve +vp* func_map['cos'](theta)) + p_y * vp * func_map['sin'](theta)
             
             if self.reach_aim == 'avoid':
-                ham -= -self.omega_max * func_map['abs'](p_x*pos_y  - p_y*pos_x - p_theta) + self.omega_max * p_theta  # Maximize angular velocity
+                ham += self.omega_max * func_map['abs'](p_x*pos_y  - p_y*pos_x - p_theta) - self.omega_max * p_theta  # Maximize angular velocity
             else:  # reach
-                ham += -self.omega_max * func_map['abs'](p_x*pos_y  - p_y*pos_x - p_theta) + self.omega_max * p_theta  # Minimize angular velocity
-        
-        # Apply backward/forward mode adjustment
-        if self.reach_mode == 'backward':
-            ham = -ham
+                ham -= self.omega_max * func_map['abs'](p_x*pos_y  - p_y*pos_x - p_theta) - self.omega_max * p_theta  # Minimize angular velocity
             
         return ham
 
