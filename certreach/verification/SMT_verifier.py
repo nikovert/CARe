@@ -104,24 +104,16 @@ class SMTVerifier:
         
         # Get model output
         model_out = model(ce_input)
-        output = model_out['model_out']
+        boundary_value = compute_boundary(ce_states)
         
-        # Compute boundary condition value and violation
-        boundary_value = None
-        model_value = None
-        boundary_diff = None
+        gt = {'source_boundary_values': boundary_value, 'dirichlet_mask': counterexample[0] == 0.0}
+        loss = loss_fn(model_out, gt)  # Compute loss to get gradients
         
-        if counterexample[0] == 0.0:  # Initial condition
-            boundary_value = compute_boundary(ce_states)
-            model_value = output.item()
-            boundary_diff = abs(model_value - boundary_value).item()
-            
-            result['details']['boundary_value'] = boundary_value
-            result['details']['model_value'] = model_value
-            result['details']['boundary_diff'] = boundary_diff
-        
-        loss = loss_fn(model_out)  # Compute loss to get gradients
         pde_residual = loss['diff_constraint_hom'].item()
+        if counterexample[0] == 0.0: 
+            boundary_diff = loss['dirichlet'].item()
+        else:
+            boundary_diff = None
         
         result['details']['pde_residual'] = pde_residual
         
@@ -162,7 +154,7 @@ class SMTVerifier:
         epsilon: float,
     ) -> Tuple[bool, Optional[torch.Tensor], Dict[str, float]]:
         """
-        Verify a trained model using dReal/Z3/Marabou with option to reuse symbolic model.
+        Verify a trained model using dReal/Z3.
         
         Args:
             model_state: The model's state dictionary
@@ -205,7 +197,6 @@ class SMTVerifier:
                 epsilon=epsilon,
                 delta=self.delta,
                 reach_mode=system_specifics.get('reach_mode', 'forward'),
-                reach_aim=system_specifics.get('reach_aim', 'avoid'),
                 min_with=system_specifics.get('min_with', 'none'),
                 set_type=system_specifics.get('set_type', 'set'),
                 save_directory=system_specifics['root_path'],
@@ -239,7 +230,6 @@ class SMTVerifier:
                 compute_boundary=compute_boundary,
                 epsilon=epsilon,
                 reach_mode=system_specifics.get('reach_mode', 'forward'),
-                reach_aim=system_specifics.get('reach_aim', 'avoid'),
                 min_with=system_specifics.get('min_with', 'none'),
                 set_type=system_specifics.get('set_type', 'set'),
                 save_directory=system_specifics['root_path'],

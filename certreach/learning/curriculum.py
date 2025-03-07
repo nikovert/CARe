@@ -6,7 +6,6 @@ logger = logging.getLogger(__name__)
 
 class Curriculum:
     """Manages curriculum learning progress for ReachabilityDataset."""
-    DIRICHLET_WEIGHT = 1/15e2
     def __init__(self, 
                  dataset: ReachabilityDataset,
                  total_steps: int,
@@ -65,13 +64,13 @@ class Curriculum:
         if self.is_pretraining:
             # During pretraining, focus more on Dirichlet boundary conditions
             weights = {
-                'dirichlet': batch_size*self.DIRICHLET_WEIGHT,
+                'dirichlet': 100,
                 'diff_constraint_hom': 1.0
             }
         else:
-            # Gradually increase importance of homogeneous differential constraint
+            # Increase importance of homogeneous differential constraint
             weights = {
-                'dirichlet': batch_size*self.DIRICHLET_WEIGHT,
+                'dirichlet': 10,
                 'diff_constraint_hom': 1.0
             }
         

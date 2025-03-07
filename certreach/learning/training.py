@@ -26,8 +26,8 @@ def train(model: torch.nn.Module,
           device: Optional[torch.device] = None,
           clip_grad: bool = True, 
           use_amp: bool = True,
-          l1_lambda: float = 1e-2,
-          weight_decay: float = 1e-2,
+          l1_lambda: float = 1e-4,
+          weight_decay: float = 1e-3,
           is_finetuning: bool = False,
           momentum: float = 0.9,
           **kwargs
@@ -52,8 +52,8 @@ def train(model: torch.nn.Module,
         device: Device to use for training (default: CUDA if available, else CPU)
         clip_grad: Whether to clip gradients during training (default: True)
         use_amp: Whether to use automatic mixed precision (default: True for CUDA)
-        l1_lambda: L1 regularization strength (default: 1e-2)
-        weight_decay: L2 regularization strength (default: 1e-2)
+        l1_lambda: L1 regularization strength (default: 1e-4)
+        weight_decay: L2 regularization strength (default: 1e-3)
         is_finetuning: Whether this is a fine-tuning run (default: False)
         momentum: Momentum parameter for SGD when fine-tuning (default: 0.9)
         **kwargs: Additional arguments to pass to the optimizer
@@ -135,7 +135,7 @@ def train(model: torch.nn.Module,
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     model.checkpoint_dir = checkpoints_dir  # Set checkpoint directory for model
 
-    with tqdm(total=curriculum_epochs) as pbar:
+    with tqdm(total=max_epochs) as pbar:
         train_losses = []
         best_loss = float('inf')
         patience_counter = 0
@@ -191,8 +191,14 @@ def train(model: torch.nn.Module,
                 loss_weights = curriculum.get_loss_weights(batch_size)
                 
                 # Apply weights to losses and normalize by batch size
-                train_loss = sum(loss.mean() * loss_weights.get(name, 1.0)
+                mean_train_loss = sum(loss.mean() * loss_weights.get(name, 1.0)
                                 for name, loss in losses.items())
+                
+                # Apply weights to losses and normalize by batch size
+                max_train_loss = sum(loss.max() * loss_weights.get(name, 1.0)
+                                for name, loss in losses.items())
+                max_lambda = 0.1
+                train_loss = mean_train_loss + max_lambda*max_train_loss
                 
                 # Calculate total loss and add L1 regularization using PyTorch's built-in function
                 if l1_lambda > 0:
@@ -201,13 +207,13 @@ def train(model: torch.nn.Module,
                         l1_loss += F.l1_loss(param, torch.zeros_like(param), reduction='sum')
                     train_loss += l1_lambda * l1_loss
 
-            dichlet_condition_SAT = losses['dirichlet']/(dataset.percentage_at_t0/100 * batch_size) < epsilon*0.75
-            diff_constraint_SAT = losses['diff_constraint_hom']/batch_size < epsilon*0.75 # Would need to be adapted if time hoizon is not 1
+            dichlet_condition_SAT = losses['dirichlet'].max() < epsilon*0.75
+            diff_constraint_SAT =  losses['diff_constraint_hom'].mean() < epsilon*0.75 # Would need to be adapted if time hoizon is not 1
 
             if dichlet_condition_SAT and (curriculum.is_pretraining or diff_constraint_SAT):
                 progress_flag = True
-                if curriculum.get_progress() == 1.0:
-                    stopping_flag = epoch > 1000  # Stop after minimum of 1000 epochs
+                if curriculum.get_progress() == 1.0 and losses['diff_constraint_hom'].max() < epsilon:
+                    stopping_flag = epoch > 100  # Stop after minimum of 100 epochs
             else:
                 progress_flag = False
 
@@ -232,6 +238,9 @@ def train(model: torch.nn.Module,
                           f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
                           f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}, "
                           f"Time: {time.time() - start_time:.3f}s")
+                tqdm.write(f"Diff Constraint Mean: {losses['diff_constraint_hom'].mean():.6f}, "
+                          f"Diff Constraint Max: {losses['diff_constraint_hom'].max():.6f}, "
+                          f"Dirichlet Max: {losses['dirichlet'].max():.6f}")
                 curr_progress = curriculum.get_progress()
                 t_min, t_max = curriculum.get_time_range()
                 phase = "Pretraining" if curriculum.is_pretraining else "Curriculum"

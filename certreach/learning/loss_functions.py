@@ -48,13 +48,12 @@ class HJILossFunction:
             )
         return self._hamiltonian_fn(x, p, Abs)
     
-    def compute_loss(self, model_output, gt = None):
+    def compute_loss(self, model_output, gt):
         """Template method that implements the common loss computation pattern."""
         x = model_output['model_in']
         y = model_output['model_out']
-        if gt is not None:
-            source_boundary_values = gt['source_boundary_values']
-            dirichlet_mask = gt['dirichlet_mask']
+        source_boundary_values = gt['source_boundary_values']
+        dirichlet_mask = gt['dirichlet_mask']
 
         du, _ = operators.jacobian(y, x)
         dudt = du[..., 0, 0]
@@ -62,27 +61,20 @@ class HJILossFunction:
         states = x[...,1:]
 
         ham = self.compute_hamiltonian(states, dudx)
-        ham = self._apply_reachability_logic(ham)
         ham = self._apply_minimization_constraint(ham)
-
-        if gt is None:
-            diff_constraint_hom = dudt + ham
-            return {'diff_constraint_hom': torch.abs(diff_constraint_hom).sum()}
+        ham = self._apply_reachability_logic(ham)
         
-        if torch.all(dirichlet_mask):
-            diff_constraint_hom = torch.tensor(0.0, device=dirichlet_mask.device)
-        else:
-            diff_constraint_hom = dudt + ham
-            if self.min_with == 'target':
-                diff_constraint_hom = torch.max(diff_constraint_hom[:, :, None], y - source_boundary_values)
+        diff_constraint_hom = dudt + ham
+        if self.min_with == 'target':
+            diff_constraint_hom = torch.max(diff_constraint_hom[:, :, None], y - source_boundary_values)
 
         dirichlet_loss = self._compute_dirichlet_loss(y, source_boundary_values, dirichlet_mask)
-        return {'dirichlet': dirichlet_loss, 'diff_constraint_hom': torch.abs(diff_constraint_hom).sum()}
+        return {'dirichlet': dirichlet_loss, 'diff_constraint_hom': torch.abs(diff_constraint_hom)}
 
     def _compute_dirichlet_loss(self, y, source_boundary_values, dirichlet_mask):
         """Compute Dirichlet boundary condition loss."""
         dirichlet = y[dirichlet_mask] - source_boundary_values[dirichlet_mask]
-        return torch.abs(dirichlet).sum()
+        return torch.abs(dirichlet)
 
     def _apply_minimization_constraint(self, ham):
         """Apply minimization constraint to Hamiltonian."""
