@@ -208,7 +208,7 @@ def train(model: torch.nn.Module,
                     train_loss += l1_lambda * l1_loss
 
             dichlet_condition_SAT = losses['dirichlet'].max() < epsilon*0.75
-            diff_constraint_SAT =  losses['diff_constraint_hom'].mean() < epsilon*0.75 # Would need to be adapted if time hoizon is not 1
+            diff_constraint_SAT =  losses['diff_constraint_hom'].max() < epsilon # Would need to be adapted if time hoizon is not 1
 
             if dichlet_condition_SAT and (curriculum.is_pretraining or diff_constraint_SAT):
                 progress_flag = True

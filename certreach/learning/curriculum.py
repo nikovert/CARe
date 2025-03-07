@@ -32,10 +32,9 @@ class Curriculum:
             if self.is_pretraining:
                 logger.info("Pretraining finished, starting rollout.")
                 self.is_pretraining = False
-            else:
-                self.current_step += 1
-                t_min, t_max = self.get_time_range()
-                self.dataset.update_time_range(t_min, t_max)
+            self.current_step += 1
+            t_min, t_max = self.get_time_range()
+            self.dataset.update_time_range(t_min, t_max)
     
     def get_progress(self) -> float:
         """Get current curriculum progress."""
