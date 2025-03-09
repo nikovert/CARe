@@ -137,8 +137,6 @@ def train(model: torch.nn.Module,
 
     with tqdm(total=max_epochs) as pbar:
         train_losses = []
-        best_loss = float('inf')
-        patience_counter = 0
         stopping_flag = False
         progress_flag = False # Flag to indicate if curriculum should procude forward
         for epoch in range(0, max_epochs): 
@@ -212,7 +210,7 @@ def train(model: torch.nn.Module,
 
             if dichlet_condition_SAT and (curriculum.is_pretraining or diff_constraint_SAT):
                 progress_flag = True
-                if curriculum.get_progress() == 1.0 and losses['diff_constraint_hom'].max() < epsilon:
+                if curriculum.get_progress() == 1.0 and losses['diff_constraint_hom'].max() < epsilon*0.95:
                     stopping_flag = epoch > 100  # Stop after minimum of 100 epochs
             else:
                 progress_flag = False
@@ -255,22 +253,6 @@ def train(model: torch.nn.Module,
                 # Log if learning rate changed
                 if prev_lr != optim.param_groups[0]['lr']:
                     scheduler.log_lr(optim)
-                
-                # Early stopping for fine-tuning
-                if train_loss < best_loss:
-                    best_loss = train_loss
-                    patience_counter = 0
-                    # Save best model during fine-tuning
-                    model.save_checkpoint(
-                        name='model_best_finetuned',
-                        optimizer=optim,
-                        epoch=epoch
-                    )
-                else:
-                    patience_counter += 1
-                    if patience_counter >= 10000:  # Early stopping after 10000 epochs without improvement
-                        logger.info("Early stopping triggered")
-                        break
 
         # Save final model
         model.save_checkpoint(
@@ -283,13 +265,3 @@ def train(model: torch.nn.Module,
         # Save final losses
         np.savetxt(checkpoints_dir / 'train_losses_final.txt', 
                    np.array(train_losses))
-
-    # After training, load the best model if we were fine-tuning
-    if is_finetuning:
-        try:
-            best_model_path = Path(model_dir) / 'checkpoints' / 'model_best_finetuned.pth'
-            if best_model_path.exists():
-                model.load_checkpoint(best_model_path)
-                logger.info("Loaded best fine-tuned model")
-        except Exception as e:
-            logger.warning(f"Could not load best fine-tuned model: {e}")

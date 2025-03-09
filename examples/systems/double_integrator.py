@@ -1,7 +1,7 @@
 import torch
 import logging
 from math import sqrt
-from typing import List
+from typing import List, Union, Dict, Any, Callable
 
 from certreach.common.base_system import DynamicalSystem
 from examples.factories import register_example
@@ -10,15 +10,92 @@ from examples.factories import register_example
 logger = logging.getLogger(__name__)
 
 def double_integrator_boundary(states, radius=sqrt(0.25)):
-    """Compute boundary values for both PyTorch tensors and dReal variables."""
+    """
+    Compute boundary values for both PyTorch tensors and dReal/symbolic variables.
+    
+    This function is designed to be serializable for multiprocessing.
+    
+    Args:
+        states: Either a PyTorch tensor of shape [batch_size, state_dim] or a list of symbolic variables
+        radius: Collision radius
+        
+    Returns:
+        Boundary values in the same format as input
+    """
     # Check if using PyTorch tensors
     using_torch = isinstance(states, torch.Tensor)
     
     if using_torch:
         return torch.norm(states, dim=1, keepdim=True)**2 - radius**2
     else:
-        x, v = states[0], states[1]
-        return (x * x + v * v) - radius**2
+        # Symbolic computation - unpack states
+        # States length can vary based on the system dimension
+        if not states:
+            return 0
+            
+        sum_squares = sum(s*s for s in states)
+        return sum_squares - radius**2
+
+def double_integrator_hamiltonian(states, partials, func_map, input_bounds, reach_aim='reach'):
+    """
+    Compute the Hamiltonian for the Double Integrator system.
+    
+    This standalone function is designed to be serializable for multiprocessing.
+    
+    Args:
+        states: List of state variables or tensor [batch_size, state_dim]
+        partials: List of partial derivative variables or tensor [batch_size, state_dim]
+        func_map: Dictionary mapping function names to their implementations
+        input_bounds: Optional dictionary with 'min' and 'max' control bounds
+        reach_aim: 'reach' or 'avoid'
+        
+    Returns:
+        Hamiltonian value in the same format as inputs
+    """
+    using_torch = isinstance(partials[0] if isinstance(partials, (list, tuple)) else partials[..., 0], torch.Tensor)
+    
+    if using_torch:
+        p1, p2 = partials[..., 0], partials[..., 1]
+        x2 = states[..., 1]
+    else:
+        # For symbolic variables (list format)
+        if len(partials) < 2 or len(states) < 2:
+            return 0
+        p1, p2 = partials[0], partials[1]
+        x2 = states[1]
+        
+    # Basic part of Hamiltonian 
+    ham = p1 * x2
+
+    input_min = input_bounds['min']
+    input_max = input_bounds['max']
+    is_symmetric = torch.equal(input_max, -input_min)
+    
+    if is_symmetric:
+        input_magnitude = input_max
+        sign = 1 if reach_aim == 'reach' else -1
+        
+        if using_torch:
+            ham += sign * input_magnitude * torch.abs(p2)
+        else:
+            abs_p2 = func_map['abs'](p2) if 'abs' in func_map else abs(p2)
+            ham += sign * input_magnitude * abs_p2
+    else:
+        # Asymmetric bounds branch with arithmetic formulation
+        if using_torch:
+            if reach_aim == 'avoid':
+                ham += torch.where(p2 >= 0, input_min * p2, input_max * p2)
+            else:  # reach
+                ham += torch.where(p2 >= 0, input_max * p2, input_min * p2)
+        else:
+            # For symbolic computation
+            abs_p2 = func_map['abs'](p2) if 'abs' in func_map else abs(p2)
+            if reach_aim == 'reach':
+                ham += ((input_max + input_min)/2 * p2 + (input_max - input_min)/2 * abs_p2)
+            else:  # avoid
+                ham += ((input_max + input_min)/2 * p2 - (input_max - input_min)/2 * abs_p2)
+    
+    return ham
 
 @register_example
 class DoubleIntegrator(DynamicalSystem):
@@ -37,56 +114,26 @@ class DoubleIntegrator(DynamicalSystem):
             'max': torch.tensor([args.input_max])
         }
         
-        # Define the boundary condition function
-        self.boundary_fn = double_integrator_boundary
+        # Define the boundary condition function with fixed radius
+        self.boundary_radius = sqrt(0.25)
+        self.boundary_fn = lambda states: double_integrator_boundary(states, self.boundary_radius)
     
     def compute_hamiltonian(self, x, p, func_map: dict) -> torch.Tensor:
-        """Compute the Hamiltonian for the Double Integrator system."""
-        using_torch = isinstance(p[0] if isinstance(p, (list, tuple)) else p[..., 0], torch.Tensor)
-        
-        if using_torch:
-            p1, p2 = p[..., 0], p[..., 1]
-            x2 = x[..., 1]
-        else:
-            p1, p2 = p[0], p[1]
-            x2 = x[1]
-            
-        ham = p1 * x2
-
+        """
+        Instance method that delegates to the standalone function for better serializability.
+        """
         # Check if control bounds are symmetric
         input_min = self.input_bounds['min'].to(self.device)
         input_max = self.input_bounds['max'].to(self.device)
-        
-        if torch.equal(input_max, -input_min):
-            input_magnitude = input_max  # or abs(input_min)
-            sign = 1 if self.reach_aim == 'reach' else -1
-            if using_torch:
-                # Use torch.abs(p2) instead of multiplication for efficiency
-                ham += sign * input_magnitude * torch.abs(p2)
-            else:
-                abs_p2 = func_map['abs'](p2)
-                ham += sign * float(input_magnitude.item()) * abs_p2
-        else:
-            # Update asymmetric bounds branch with arithmetic formulation
-            if using_torch:
-                if self.reach_aim == 'avoid':
-                    ham += torch.where(p2 >= 0, input_min * p2, input_max * p2)
-                else:  # reach
-                    ham += torch.where(p2 >= 0, input_max * p2, input_min * p2)
-            else:
-                # Replace if_then_else with arithmetic operations:
-                a = float(input_max.item())
-                b = float(input_min.item())
-                abs_p2 = func_map['abs'](p2)
-                # For reach: use a when p2>=0, and b when p2<0, expressed as:
-                #   (a+b)/2 * p2 + (a-b)/2 * |p2|
-                # For avoid: flip the sign on the absolute value term
-                if self.reach_aim == 'reach':
-                    ham += ((a + b)/2 * p2 + (a - b)/2 * abs_p2)
-                else:  # avoid
-                    ham += ((a + b)/2 * p2 - (a - b)/2 * abs_p2)
-        
-        return ham
+
+        return double_integrator_hamiltonian(
+            x, p, func_map, 
+            input_bounds={
+                'min': input_min,
+                'max': input_max
+            }, 
+            reach_aim=self.reach_aim
+        )
 
     def _get_state_names(self) -> List[str]:
         """Override state names for Double Integrator."""

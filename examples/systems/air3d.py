@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import List, Union, Dict, Any, Callable
 
 import torch
 import matplotlib
@@ -13,7 +13,18 @@ from examples.factories import register_example
 logger = logging.getLogger(__name__)
 
 def air3d_boundary(states, collision_radius=sqrt(0.25)):
-    """Compute boundary values for both PyTorch tensors and dReal variables."""
+    """
+    Compute boundary values for both PyTorch tensors and symbolic variables.
+    
+    This standalone function is designed to be serializable for multiprocessing.
+    
+    Args:
+        states: Either a PyTorch tensor of shape [batch_size, state_dim] or a list of symbolic variables
+        collision_radius: Radius for collision detection
+        
+    Returns:
+        Boundary values in the same format as input
+    """
     # Check if using PyTorch tensors
     using_torch = isinstance(states, torch.Tensor)
     
@@ -22,10 +33,81 @@ def air3d_boundary(states, collision_radius=sqrt(0.25)):
         pos = states[:, :2]
         return torch.norm(pos, dim=1, keepdim=True)**2 - collision_radius**2
     else:
-        # dReal mode - coords will be a list of variables [t, x, y, theta]
+        # dReal/symbolic mode - extract [x, y] from states list
+        if len(states) < 2:  # Need at least x and y
+            return 0
         x, y = states[0], states[1]
-        # Manual computation of L2 norm for dReal
+        # Manual computation of L2 norm for symbolic variables
         return (x * x + y * y) - collision_radius**2
+
+def air3d_hamiltonian(states, partials, func_map, velocity=0.75, omega_max=3.0, reach_aim='reach', alpha_angle=pi):
+    """
+    Compute the Hamiltonian for the Air3D system.
+    
+    This standalone function is designed to be serializable for multiprocessing.
+    
+    Args:
+        states: List of state variables or tensor [batch_size, state_dim]
+        partials: List of partial derivative variables or tensor [batch_size, state_dim]
+        func_map: Dictionary mapping function names to their implementations
+        velocity: Aircraft velocity
+        omega_max: Maximum angular velocity
+        reach_aim: 'reach' or 'avoid'
+        alpha_angle: Scaling factor for theta
+        
+    Returns:
+        Hamiltonian value in the same format as inputs
+    """
+    using_torch = isinstance(partials[0] if isinstance(partials, (list, tuple)) else partials[..., 0], torch.Tensor)
+
+    ve = velocity
+    vp = velocity
+
+    if using_torch:
+        # x is [batch, 3] for [x, y, theta]
+        # p is [batch, 3] for [p_x, p_y, p_theta]
+        pos_x, pos_y = states[..., 0], states[..., 1]
+        theta = states[..., 2] * alpha_angle
+        p_x, p_y, p_theta = partials[..., 0], partials[..., 1], partials[..., 2] / alpha_angle
+        
+        # Compute Hamiltonian terms
+        ham = p_x * (-ve + vp * torch.cos(theta)) + p_y * vp * torch.sin(theta)
+
+        # Control input term based on reach/avoid
+        if reach_aim == 'avoid':
+            ham += omega_max * torch.abs(p_x*pos_y - p_y*pos_x - p_theta) - omega_max * p_theta
+        else:  # reach
+            ham -= omega_max * torch.abs(p_x*pos_y - p_y*pos_x - p_theta) - omega_max * p_theta
+    else:
+        # Symbolic computation - check if we have enough variables
+        if len(states) < 3 or len(partials) < 3:
+            return 0
+            
+        pos_x, pos_y = states[0], states[1]
+        theta = states[2] * alpha_angle
+        p_x, p_y, p_theta = partials[0], partials[1], partials[2] / alpha_angle
+        
+        # Use provided function map for symbolic functions
+        cos_fn = func_map.get('cos', None)
+        sin_fn = func_map.get('sin', None)
+        abs_fn = func_map.get('abs', abs)
+        
+        if cos_fn is None or sin_fn is None:
+            # Fallback if functions aren't provided
+            logger.warning("Missing trigonometric functions in func_map, using defaults")
+            import math
+            cos_fn = math.cos
+            sin_fn = math.sin
+            
+        # Compute Hamiltonian terms for symbolic variables
+        ham = p_x * (-ve + vp * cos_fn(theta)) + p_y * vp * sin_fn(theta)
+        
+        if reach_aim == 'avoid':
+            ham += omega_max * abs_fn(p_x*pos_y - p_y*pos_x - p_theta) - omega_max * p_theta
+        else:  # reach
+            ham -= omega_max * abs_fn(p_x*pos_y - p_y*pos_x - p_theta) - omega_max * p_theta
+            
+    return ham
 
 @register_example
 class Air3D(DynamicalSystem):
@@ -54,42 +136,16 @@ class Air3D(DynamicalSystem):
         self.boundary_fn = lambda states: air3d_boundary(states, self.collision_radius)
     
     def compute_hamiltonian(self, x, p, func_map: dict) -> torch.Tensor:
-        """Compute the Hamiltonian for the Air3D system."""
-        using_torch = isinstance(p[0] if isinstance(p, (list, tuple)) else p[..., 0], torch.Tensor)
-
-        ve = self.velocity
-        vp = self.velocity
-
-        if using_torch:
-            # x is [batch, 3] for [x, y, theta]
-            # p is [batch, 3] for [p_x, p_y, p_theta]
-            pos_x, pos_y = x[..., 0], x[..., 1]
-            theta = x[..., 2] * self.alpha_angle
-            p_x, p_y, p_theta = p[..., 0], p[..., 1], p[..., 2] / self.alpha_angle
-            
-            # Compute Hamiltonian terms
-            ham = p_x * (-ve +vp* torch.cos(theta)) + p_y * vp * torch.sin(theta)
-
-            # Control input term based on reach/avoid
-            if self.reach_aim == 'avoid':
-                ham += self.omega_max * torch.abs(p_x*pos_y  - p_y*pos_x - p_theta) - self.omega_max * p_theta # Maximize angular velocity
-            else:  # reach
-                ham -= self.omega_max * torch.abs(p_x*pos_y  - p_y*pos_x - p_theta) - self.omega_max * p_theta  # Minimize angular velocity
-        else:
-            # symbolic computation
-            pos_x, pos_y = x[0], x[1]
-            theta = x[2] * self.alpha_angle
-            p_x, p_y, p_theta = p[0], p[1], p[2] / self.alpha_angle
-            
-            # Compute Hamiltonian terms
-            ham = p_x * (-ve +vp* func_map['cos'](theta)) + p_y * vp * func_map['sin'](theta)
-            
-            if self.reach_aim == 'avoid':
-                ham += self.omega_max * func_map['abs'](p_x*pos_y  - p_y*pos_x - p_theta) - self.omega_max * p_theta  # Maximize angular velocity
-            else:  # reach
-                ham -= self.omega_max * func_map['abs'](p_x*pos_y  - p_y*pos_x - p_theta) - self.omega_max * p_theta  # Minimize angular velocity
-            
-        return ham
+        """
+        Instance method that delegates to the standalone function for better serializability.
+        """
+        return air3d_hamiltonian(
+            x, p, func_map,
+            velocity=self.velocity,
+            omega_max=self.omega_max,
+            reach_aim=self.reach_aim,
+            alpha_angle=self.alpha_angle
+        )
 
     def _get_state_names(self) -> List[str]:
         """Override state names for Air3D."""

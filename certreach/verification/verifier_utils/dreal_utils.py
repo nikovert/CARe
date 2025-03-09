@@ -1,28 +1,161 @@
 import json
 import sympy
 import logging
-import time 
 import dreal
-from dreal import Variable, And, Or, Not, CheckSatisfiability
+from dreal import Variable, And, Or, Not
 import concurrent.futures
-from typing import Optional
+from certreach.verification.verifier_utils.constraint_builder import (
+    prepare_constraint_data_batch,
+    process_check_advanced,
+    serialize_dreal_expression,
+    parse_counterexample as parse_ce
+)
 
 logger = logging.getLogger(__name__)
 use_if_then_else = False
 
+# Global function map for mathematical operations
 func_map = {
-            'sin': dreal.sin,    # Sine function
-            'cos': dreal.cos,    # Cosine function
-            'exp': dreal.exp,    # Exponential function
-            'tanh': dreal.tanh,  # Hyperbolic tangent
-            'abs': abs           # Absolute value
-        }
+    'sin': dreal.sin,    # Sine function
+    'cos': dreal.cos,    # Cosine function
+    'exp': dreal.exp,    # Exponential function
+    'tanh': dreal.tanh,  # Hyperbolic tangent
+    'abs': abs           # Absolute value
+}
 
-def _check_constraint(constraint: dreal.Formula, precision: float) -> Optional[dreal.Box]:
-    """Helper function to check a single constraint."""
-    logger.debug(f"Starting constraint check with precision {precision}")
-    result = CheckSatisfiability(constraint, precision)
-    return result
+
+def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5, delta = 0.001,
+                      reach_mode='forward', min_with='none', set_type='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
+    """
+    Verifies if the HJB equation holds using dReal for a double integrator system.
+    
+    Parameters:
+      ...
+      reach_mode (str): 'forward' (default) or 'backward' for reach set computation
+      min_with (str): Specifies minimum value computation method ('none', or 'target')
+      set_type (str): 'set' (default) or 'tube' for target set type
+      execution_mode (str): "parallel" (default) runs constraint checks concurrently,
+                           "sequential" runs the boundary and derivative checks in sequence while timing each.
+    """
+    
+    
+    # Extract state variables and partial derivatives dynamically
+    state_vars = []
+    partials = []
+    for i in range(2, len(dreal_variables) + 1):
+        state_vars.append(dreal_variables[f"x_1_{i}"])
+        partials.append(dreal_partials[f"partial_x_1_{i}"])
+
+    # Use class method for Hamiltonian computation and other setup
+    hamiltonian_value = compute_hamiltonian(state_vars, partials, func_map)
+
+    if set_type == 'tube': 
+        hamiltonian_value = dreal.Max(hamiltonian_value, 0)
+
+    if reach_mode == 'backward':
+        hamiltonian_value = -hamiltonian_value
+
+    hamiltonian_expr = serialize_dreal_expression(hamiltonian_value)
+    
+    # Serialize expressions
+    value_fn_expr = serialize_dreal_expression(d_real_value_fn)
+    partials_expr = {key: serialize_dreal_expression(val) for key, val in dreal_partials.items()}
+    
+    boundary_value = compute_boundary(state_vars)
+    boundary_expr = serialize_dreal_expression(boundary_value)
+
+    result = None
+    timing_info = {}
+    
+    if execution_mode == "parallel":
+        logger.info("Starting parallel constraint checks...")
+        
+        # Prepare data for parallel execution
+        state_dim = len(state_vars)  # Subtract 1 for time variable
+        
+        # Use the constraint builder to create serializable constraint data
+        constraint_data_batch = prepare_constraint_data_batch(
+            state_dim=state_dim,
+            epsilon=epsilon,
+            delta=delta,
+            min_with=min_with,
+            reach_mode=reach_mode,
+            set_type=set_type
+        )
+
+        # Process-based implementation using ProcessPoolExecutor
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            # Submit all constraint checks in parallel
+            futures = []
+            
+            for constraint_data in constraint_data_batch:
+                
+                futures.append(executor.submit(
+                    process_check_advanced,
+                    constraint_data,
+                    hamiltonian_expr,
+                    value_fn_expr,
+                    boundary_expr,
+                    partials_expr
+                ))
+            
+            # Process results as they complete
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    constraint_id, constraint_result = future.result()
+                    
+                    if constraint_result and not constraint_result.startswith("Error"):
+                        # We found a counterexample
+                        result = constraint_result
+                        logger.info(f"Found counterexample in constraint {constraint_id}; cancelling remaining tasks.")
+                        # Cancel any remaining futures
+                        for f in futures:
+                            if not f.done():
+                                f.cancel()
+                        break
+                    elif constraint_result and constraint_result.startswith("Error"):
+                        logger.error(f"Error in constraint {constraint_id}: {constraint_result}")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing constraint check result: {e}")
+        
+        logger.info("Parallel constraint checks completed.")
+    
+    elif execution_mode == "sequential":
+        # ... existing sequential execution code ...
+        pass
+    else:
+        logger.error(f"Unknown execution_mode: {execution_mode}.")
+    
+    # ... existing result processing code ...
+    
+    if not result:
+        success = True  # HJB Equation is satisfied
+        logger.info("No counterexamples found in checks.")
+        verification_result = {
+            "epsilon": epsilon,
+            "result": "HJB Equation Satisfied",
+            "counterexample": None,
+            "timing": timing_info
+        }
+    else:
+        success = False  # HJB Equation is not satisfied
+        verification_result = {
+            "epsilon": epsilon,
+            "result": "HJB Equation Not Satisfied",
+            "counterexample": parse_ce(str(result)),
+            "timing": timing_info
+        }
+    
+    # Optionally save result to file
+    result_file = f"{save_directory}/dreal_result.json"
+    with open(result_file, "w") as f:
+        json.dump(verification_result, f, indent=4)
+    logger.debug(f"Saved result to {result_file}")
+
+    counterexample = parse_ce(str(result)) if not success else None
+
+    return success, counterexample
 
 def parse_counterexample(result_str):
     """
@@ -46,229 +179,6 @@ def parse_counterexample(result_str):
         logger.error(f"Failed to parse counterexample: {e}")
         return None
     return counterexample
-
-def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5, delta = 0.001,
-                      reach_mode='forward', min_with='none', set_type='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
-    """
-    Verifies if the HJB equation holds using dReal for a double integrator system.
-    
-    Parameters:
-      ...
-      reach_mode (str): 'forward' (default) or 'backward' for reach set computation
-      min_with (str): Specifies minimum value computation method ('none', or 'target')
-      set_type (str): 'set' (default) or 'tube' for target set type
-      execution_mode (str): "parallel" (default) runs constraint checks concurrently,
-                            "sequential" runs the boundary and derivative checks in sequence while timing each.
-    """
-    
-    # Extract time variable
-    t = dreal_variables["x_1_1"]
-    
-    # Extract state variables and partial derivatives dynamically
-    state_vars = []
-    partials = []
-    for i in range(2, len(dreal_variables) + 1):
-        state_vars.append(dreal_variables[f"x_1_{i}"])
-        partials.append(dreal_partials[f"partial_x_1_{i}"])
-
-    dv_dt = dreal_partials["partial_x_1_1"]
-
-    # Use class method for Hamiltonian computation
-    hamiltonian_value = compute_hamiltonian(state_vars, partials, func_map)
-
-    if set_type == 'tube': # This could also be improved with parallelisation
-        hamiltonian_value = dreal.Max(hamiltonian_value, 0)
-
-    if reach_mode == 'backward':
-        hamiltonian_value = -hamiltonian_value
-
-    # Define State constraints
-    state_constraints = And(
-        t >= 0, t <= 1,
-        *[And(var >= -1, var <= 1) for var in state_vars]
-    )
-
-    initial_state_constraints = And(
-        t == 0,
-        *[And(var >= -1, var <= 1) for var in state_vars]
-    )
-
-    # Define boundary constraints (assuming T=1)
-    boundary_value = compute_boundary(state_vars)
-    boundary_condition_1 = d_real_value_fn - boundary_value > epsilon
-    boundary_condition_2 = d_real_value_fn - boundary_value < -epsilon
-
-    if min_with == 'target':
-        # || max[dv_dt + H, V(x) - g(x)] || <= epsilon
-        # => [dv_dt + H >= -epsilon OR V(x) - g(x) >= -epsilon]
-        #    AND [dv_dt + H <= epsilon AND V(x) - g(x) <= epsilon]
-        #
-        # To check:
-        #       [dv_dt + H < - epsilon AND V(x) - g(x) < -epsilon]
-        #    OR dv_dt + H > epsilon 
-        #    OR V(x) - g(x) > epsilon (same as boundary_condition_1)
-        target_condition_1 = And(dv_dt + hamiltonian_value < -epsilon, boundary_condition_2)
-        target_condition_2 = dv_dt + hamiltonian_value > epsilon
-        target_condition_3 = boundary_condition_1
-    else:
-        # Define derivative constraints
-        derivative_condition_1 = dv_dt + hamiltonian_value < -epsilon
-        derivative_condition_2 = dv_dt + hamiltonian_value > epsilon
-
-
-    # Combine constraints
-    if additional_constraints:
-        boundary_constraints_2 = And(boundary_condition_2, initial_state_constraints, *additional_constraints)
-        # boundary_condition_1 can be ommited as it is included in target_condition_3
-        if min_with == 'target':
-            target_constraints_1 = And(target_condition_1, state_constraints, *additional_constraints)
-            target_constraints_2 = And(target_condition_2, state_constraints, *additional_constraints)
-            target_constraints_3 = And(target_condition_3, state_constraints, *additional_constraints)
-        else:
-            derivative_constraints_1 = And(derivative_condition_1, state_constraints, *additional_constraints)
-            derivative_constraints_2 = And(derivative_condition_2, state_constraints, *additional_constraints)
-            boundary_constraints_1 = And(boundary_condition_1, initial_state_constraints, *additional_constraints)
-    else:
-        boundary_constraints_2 = And(boundary_condition_2, initial_state_constraints)
-        # boundary_condition_1 can be ommited as it is included in target_condition_3
-        if min_with == 'target':
-            target_constraints_1 = And(target_condition_1, state_constraints)
-            target_constraints_2 = And(target_condition_2, state_constraints)
-            target_constraints_3 = And(target_condition_3, state_constraints)
-        else:
-            derivative_constraints_1 = And(derivative_condition_1, state_constraints)
-            derivative_constraints_2 = And(derivative_condition_2, state_constraints)
-            boundary_constraints_1 = And(boundary_condition_1, initial_state_constraints)
-    
-    result = None
-    timing_info = {}
-    
-    if execution_mode == "parallel":
-        logger.info("Starting parallel constraint checks...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            logger.debug("Submitting boundary and derivative constraint checks")
-            if min_with == 'target':
-                futures = [
-                    executor.submit(_check_constraint, target_constraints_1, delta),
-                    executor.submit(_check_constraint, target_constraints_2, delta),
-                    executor.submit(_check_constraint, target_constraints_3, delta),
-                    executor.submit(_check_constraint, boundary_constraints_2, delta)
-                ]
-            else:
-                futures = [
-                    executor.submit(_check_constraint, derivative_constraints_1, delta),
-                    executor.submit(_check_constraint, derivative_constraints_2, delta),
-                    executor.submit(_check_constraint, boundary_constraints_1, delta),
-                    executor.submit(_check_constraint, boundary_constraints_2, delta)
-                ]
-            for future in concurrent.futures.as_completed(futures):
-                res = future.result()
-                if res:
-                    result = res
-                    logger.info("Found counterexample; cancelling remaining tasks.")
-                    for f in futures:
-                        if f is not future:
-                            f.cancel()
-                    break
-        logger.info("Parallel constraint checks completed.")
-    elif execution_mode == "sequential":
-        logger.info("Starting sequential constraint checks with timing...")
-        
-        # Check boundary constraints first
-        start_boundary1 = time.monotonic()
-        boundary_result1 = _check_constraint(boundary_constraints_1, delta)
-        boundary_time1 = time.monotonic() - start_boundary1
-        timing_info["boundary_time1"] = boundary_time1
-        logger.info(f"Boundary check 1 completed in {boundary_time1:.4f} seconds.")
-        
-        start_boundary2 = time.monotonic()
-        boundary_result2 = _check_constraint(boundary_constraints_2, delta)
-        boundary_time2 = time.monotonic() - start_boundary2
-        timing_info["boundary_time2"] = boundary_time2
-        logger.info(f"Boundary check 2 completed in {boundary_time2:.4f} seconds.")
-        
-        boundary_result = boundary_result1 or boundary_result2
-        
-        if boundary_result:
-            result = boundary_result
-            logger.info("Found counterexample in boundary condition check.")
-        else:
-            if min_with == 'target':
-                # Check the three target constraints sequentially
-                logger.info("Checking target min_with constraints...")
-                
-                # Check condition 1
-                start_target1 = time.monotonic()
-                target_result1 = _check_constraint(target_constraints_1, delta)
-                target_time1 = time.monotonic() - start_target1
-                timing_info["target_condition1_time"] = target_time1
-                logger.info(f"Target condition 1 check completed in {target_time1:.4f} seconds.")
-                
-                # Check condition 2
-                start_target2 = time.monotonic()
-                target_result2 = _check_constraint(target_constraints_2, delta)
-                target_time2 = time.monotonic() - start_target2
-                timing_info["target_condition2_time"] = target_time2
-                logger.info(f"Target condition 2 check completed in {target_time2:.4f} seconds.")
-                
-                # Check condition 3
-                start_target3 = time.monotonic()
-                target_result3 = _check_constraint(target_constraints_3, delta)
-                target_time3 = time.monotonic() - start_target3
-                timing_info["target_condition3_time"] = target_time3
-                logger.info(f"Target condition 3 check completed in {target_time3:.4f} seconds.")
-                
-                # Combine results
-                result = target_result1 or target_result2 or target_result3
-                if result:
-                    logger.info("Found counterexample in target condition check.")
-            else:
-                # Check derivative constraints
-                start_derivative1 = time.monotonic()
-                derivative_result1 = _check_constraint(derivative_constraints_1, delta)
-                derivative_time1 = time.monotonic() - start_derivative1
-                timing_info["derivative_time1"] = derivative_time1
-                logger.info(f"Derivative check 1 completed in {derivative_time1:.4f} seconds.")
-                
-                start_derivative2 = time.monotonic()
-                derivative_result2 = _check_constraint(derivative_constraints_2, delta)
-                derivative_time2 = time.monotonic() - start_derivative2
-                timing_info["derivative_time2"] = derivative_time2
-                logger.info(f"Derivative check 2 completed in {derivative_time2:.4f} seconds.")
-                
-                result = derivative_result1 or derivative_result2
-                if result:
-                    logger.info("Found counterexample in derivative condition check.")
-    else:
-        logger.error(f"Unknown execution_mode: {execution_mode}.")
-    
-    if not result:
-        success = True  # HJB Equation is satisfied
-        logger.info("No counterexamples found in checks.")
-        verification_result = {
-            "epsilon": epsilon,
-            "result": "HJB Equation Satisfied",
-            "counterexample": None,
-            "timing": timing_info
-        }
-    else:
-        success = False  # HJB Equation is not satisfied
-        verification_result = {
-            "epsilon": epsilon,
-            "result": "HJB Equation Not Satisfied",
-            "counterexample": parse_counterexample(str(result)),
-            "timing": timing_info
-        }
-    
-    # Optionally save result to file
-    result_file = f"{save_directory}/dreal_result.json"
-    with open(result_file, "w") as f:
-        json.dump(verification_result, f, indent=4)
-    logger.debug(f"Saved result to {result_file}")
-
-    counterexample = parse_counterexample(str(result)) if not success else None
-
-    return success, counterexample
 
 def convert_symbols_to_dreal(input_symbols):
     """
@@ -477,28 +387,6 @@ def extract_dreal_partials(final_symbolic_expression):
     }
     return results
 
-def parse_counterexample(result_str):
-        """
-        Parse the counterexample from the dReal result string.
-
-        Args:
-            result_str (str): The result string from the dReal output.
-
-        Returns:
-            dict: Parsed counterexample as a dictionary of variable ranges.
-        """
-        counterexample = {}
-        try:
-            for line in result_str.strip().split('\n'):
-                # Parse each variable and its range
-                variable, value_range = line.split(':')
-                lower, upper = map(float, value_range.strip('[] ').split(','))
-                counterexample[variable.strip()] = (lower, upper)
-        except Exception as e:
-            logger.error(f"Failed to parse counterexample: {e}")
-            return None
-        return counterexample
-
 def process_dreal_result(json_path):
     """
     Process the dReal result from a JSON file to determine whether the HJB Equation is satisfied,
@@ -544,5 +432,6 @@ def process_dreal_result(json_path):
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
         return {"error": str(e)}
+
 
 

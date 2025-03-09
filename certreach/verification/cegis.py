@@ -142,7 +142,6 @@ class CEGISLoop:
                     model=self.example.model,
                     dataset=self.dataset,
                     max_epochs=10*self.args.num_epochs,  # Shorter training period for fine-tuning
-                    curriculum_epochs=self.args.num_epochs // 2,  # Also reduce curriculum epochs
                     lr=self.args.lr * 0.5,  # Lower learning rate for fine-tuning
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
@@ -235,8 +234,7 @@ class CEGISLoop:
                 train(
                     model=self.example.model,
                     dataset=self.dataset,
-                    max_epochs=self.fine_tune_epochs,
-                    curriculum_epochs=0,  # No curriculum for counterexample training
+                    max_epochs=10*self.args.num_epochs,
                     lr=self.fine_tune_lr,
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
