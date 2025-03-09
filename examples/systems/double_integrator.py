@@ -73,7 +73,7 @@ def double_integrator_hamiltonian(states, partials, func_map, input_bounds, reac
     
     if is_symmetric:
         input_magnitude = input_max
-        sign = 1 if reach_aim == 'reach' else -1
+        sign = 1 if reach_aim == 'avoid' else -1
         
         if using_torch:
             ham += sign * input_magnitude * torch.abs(p2)
@@ -83,14 +83,14 @@ def double_integrator_hamiltonian(states, partials, func_map, input_bounds, reac
     else:
         # Asymmetric bounds branch with arithmetic formulation
         if using_torch:
-            if reach_aim == 'avoid':
+            if reach_aim == 'reach':
                 ham += torch.where(p2 >= 0, input_min * p2, input_max * p2)
             else:  # reach
                 ham += torch.where(p2 >= 0, input_max * p2, input_min * p2)
         else:
             # For symbolic computation
             abs_p2 = func_map['abs'](p2) if 'abs' in func_map else abs(p2)
-            if reach_aim == 'reach':
+            if reach_aim == 'avoid':
                 ham += ((input_max + input_min)/2 * p2 + (input_max - input_min)/2 * abs_p2)
             else:  # avoid
                 ham += ((input_max + input_min)/2 * p2 - (input_max - input_min)/2 * abs_p2)
