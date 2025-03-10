@@ -36,8 +36,8 @@ def parse_expression(expr_str: str, variables: Dict[str, Variable]) -> Any:
     expr_str = expr_str.replace("cos", "dreal.cos")
     expr_str = expr_str.replace("exp", "dreal.exp")
     expr_str = expr_str.replace("tanh", "dreal.tanh")
-    expr_str = expr_str.replace("Max", "dreal.Max")
-    expr_str = expr_str.replace("Min", "dreal.Min")
+    expr_str = expr_str.replace("max", "dreal.Max")
+    expr_str = expr_str.replace("min", "dreal.Min")
     
     try:
         # Evaluate the expression string to rebuild it

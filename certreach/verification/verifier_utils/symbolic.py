@@ -1,7 +1,7 @@
 import os
 import sympy
 from concurrent.futures import ProcessPoolExecutor
-from typing import Dict, Any
+from typing import Dict, Any, Union
 import logging
 import torch
 
@@ -10,6 +10,10 @@ logger = logging.getLogger(__name__)
 def sine_transform(x: sympy.Basic, frequency: float = 30.0) -> sympy.Basic:
     """Helper function for sine transformation."""
     return sympy.sin(frequency * x)
+
+def relu_primitive_transform(x: sympy.Basic) -> sympy.Basic:
+    """Helper function for ReLU primitive transformation."""
+    return 0.5 * sympy.Max(0, x)**2
 
 def power_transform(x: sympy.Symbol, power: int, is_time: bool = False) -> sympy.Symbol:
     """Helper function for polynomial transformation."""
@@ -121,6 +125,8 @@ def get_symbolic_layer_output_generalized(state_dict: Dict[str, torch.Tensor], l
                 current_output = current_output.applyfunc(lambda x: sine_transform(x, frequency))
             elif act_type == 'relu':
                 current_output = current_output.applyfunc(lambda x: sympy.Max(0, x))
+            elif act_type == 'relu_primitive':
+                current_output = current_output.applyfunc(relu_primitive_transform)
             elif act_type == 'gelu':
                 # Approximate GELU symbolically using its definition
                 # GELU(x) ≈ 0.5x(1 + tanh(sqrt(2/π)(x + 0.044715x^3)))
@@ -312,3 +318,78 @@ def sympy_to_serializable(obj):
     # If the object is not recognized, return it as is
     return obj
 
+def simplify_heaviside_expressions(expr: Union[sympy.Expr, sympy.Matrix]) -> Union[sympy.Expr, sympy.Matrix]:
+    """
+    Simplifies expressions containing Heaviside functions with redundant patterns.
+    
+    Common simplifications include:
+    - max(0,a)*Heaviside(a) -> max(0,a)
+    - Heaviside(a)*max(0,a) -> max(0,a)
+    - Heaviside(a)*a when a >= 0 -> a
+    
+    Args:
+        expr: A sympy expression or matrix to simplify
+        
+    Returns:
+        Simplified sympy expression or matrix
+    """
+    logger.debug("Simplifying expressions with Heaviside functions")
+    
+    # Helper function to process individual expressions
+    def _simplify_expr(e):
+        if not isinstance(e, sympy.Expr):
+            return e
+            
+        # Handle matrix expressions
+        if isinstance(e, sympy.Matrix):
+            return sympy.Matrix([_simplify_expr(item) for item in e])
+            
+        # Look for multiplication patterns
+        if isinstance(e, sympy.Mul):
+            args = e.args
+            
+            # Check for Heaviside(a) * max(0, a) or max(0, a) * Heaviside(a)
+            heaviside_args = [arg for arg in args if isinstance(arg, sympy.Heaviside)]
+            max_args = [arg for arg in args if isinstance(arg, sympy.Max) and len(arg.args) == 2 and arg.args[0] == 0]
+            
+            if heaviside_args and max_args:
+                for heaviside in heaviside_args:
+                    for max_term in max_args:
+                        # If Heaviside(a) and Max(0,a) share the same argument
+                        if heaviside.args[0] == max_term.args[1]:
+                            # Remove the Heaviside term and keep the Max term
+                            remaining_args = [arg for arg in args if arg != heaviside]
+                            if len(remaining_args) == 1:
+                                return remaining_args[0]
+                            return sympy.Mul(*remaining_args)
+            
+            # Check for Heaviside(a) * a
+            for heaviside in heaviside_args:
+                heaviside_arg = heaviside.args[0]
+                if heaviside_arg in args:
+                    # Replace Heaviside(a) * a with just max(0, a)
+                    remaining_args = [arg for arg in args if arg != heaviside and arg != heaviside_arg]
+                    max_term = sympy.Max(0, heaviside_arg)
+                    if remaining_args:
+                        return sympy.Mul(*remaining_args, max_term)
+                    return max_term
+        
+        # Recursively process subexpressions
+        if e.args:
+            return e.func(*[_simplify_expr(arg) for arg in e.args])
+        
+        return e
+    
+    # Apply the helper function to the expression or matrix
+    if isinstance(expr, sympy.Matrix):
+        return expr.applyfunc(_simplify_expr)
+    return _simplify_expr(expr)
+
+def compute_partial_deriv(final_symbolic_expression: sympy.Matrix, input_symbols: list):
+    # Compute symbolic partial derivatives
+    partials = [final_symbolic_expression.diff(var) for var in input_symbols]
+
+    # Apply Heaviside simplification
+    partials = [simplify_heaviside_expressions(p) for p in partials]
+
+    return partials

@@ -47,12 +47,13 @@
                 "--num_hl", "0",
                 "--max_iterations", "3",
                 "--batch_size", "16000",
-                "--prune_after_initial",
                 "--use_polynomial",
                 "--reach_mode", "backward",
                 "--reach_aim", "avoid",
                 "--min_with", "none",
                 "--set_type", "set",
+                "--model_type", "relu_primitive",
+                "--solver", "dreal"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -103,6 +104,31 @@
                 "--num_nl", "64",
                 "--num_hl", "0",
                 "--epsilon", "0.2"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },{
+            "name": "CEGIS Double Integrator - ReLUPrimitive",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/main.py",
+            "args": [
+                "--example", "double_integrator",
+                "--run_mode", "cegis",
+                "--logging_root", "./logs",
+                "--prune_after_initial",
+                "--use_polynomial",
+                "--reach_mode", "backward",
+                "--reach_aim", "reach",
+                "--min_with", "none",
+                "--set_type", "set",
+                "--num_nl", "128",
+                "--num_hl", "1",
+                "--epsilon", "0.4",
+                "--model_type", "relu_primitive"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,

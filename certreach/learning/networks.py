@@ -14,7 +14,7 @@ class NetworkConfig:
     out_features: int = 1
     hidden_features: Union[int, tune.grid_search, tune.choice] = 32
     num_hidden_layers: Union[int, tune.grid_search, tune.choice] = 3
-    activation_type: Union[Literal['sine', 'relu', 'sigmoid', 'tanh', 'selu', 'softplus', 'elu', 'gelu'], 
+    activation_type: Union[Literal['sine', 'relu', 'relu_primitive', 'sigmoid', 'tanh', 'selu', 'softplus', 'elu', 'gelu'], 
                          tune.grid_search, tune.choice] = 'sine'
     mode: str = 'mlp'
     use_polynomial: Union[bool, tune.grid_search, tune.choice] = False
@@ -84,6 +84,35 @@ class Sine(torch.nn.Module):
         The frequency factor allows for tuning of the periodic activation.
         """
         return torch.sin(self.frequency * input)
+
+class ReLUPrimitive(torch.nn.Module):
+    """Activation function whose derivative is ReLU.
+    
+    This is the antiderivative of the ReLU function:
+    f(x) = 0.5 * x^2 for x > 0, 0 otherwise.
+    """
+    def __init__(self, inplace=False):
+        super().__init__()
+        # inplace parameter for API consistency with other PyTorch activations
+        # (doesn't actually affect computation since this is a mathematical operation)
+        self.inplace = inplace
+        # Reference to standard ReLU to demonstrate relationship
+        self.relu = torch.nn.ReLU(inplace=False)
+        
+    def forward(self, input):
+        """
+        Computes the antiderivative of ReLU: f(x) = 0.5 * x^2 if x > 0, 0 otherwise.
+        
+        Args:
+            input (torch.Tensor): Input tensor
+            
+        Returns:
+            torch.Tensor: 0.5 * x^2 where x > 0, 0 otherwise
+        """
+        # Use positive part of input from ReLU calculation to compute 0.5 * x^2
+        # More efficient than using torch.where and computing twice
+        positive_part = self.relu(input)
+        return 0.5 * positive_part * positive_part
 
 class PolynomialFunction(torch.autograd.Function):
     """Custom autograd function for polynomial computation with special time handling."""
@@ -207,6 +236,11 @@ ACTIVATION_CONFIGS: Dict[str, Tuple[torch.nn.Module, callable, Optional[callable
     'relu': (
         torch.nn.ReLU(inplace=True),
         lambda w: init.kaiming_normal_(w, nonlinearity='relu'),
+        None
+    ),
+    'relu_primitive': (
+        ReLUPrimitive(),
+        lambda w: init.kaiming_normal_(w, nonlinearity='relu'),  # Use same init as ReLU
         None
     ),
     'tanh': (

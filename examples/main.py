@@ -42,7 +42,8 @@ def parse_args():
                   help='Number of epochs between model checkpoints')
 
     # Model Settings
-    p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'relu'],
+    p.add_argument('--model_type', type=str, default='sine', 
+                  choices=['sine', 'relu', 'relu_primitive'],
                   help='Activation function for the neural network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')

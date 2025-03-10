@@ -10,6 +10,7 @@ from certreach.verification.verifier_utils.constraint_builder import (
     serialize_dreal_expression,
     parse_counterexample as parse_ce
 )
+from certreach.verification.verifier_utils.symbolic import compute_partial_deriv
 import os
 import signal
 import time
@@ -395,7 +396,7 @@ def extract_dreal_partials(final_symbolic_expression):
     input_symbols = sympy.Matrix(input_symbols)
 
     # Compute symbolic partial derivatives
-    partials = [final_symbolic_expression[0].diff(var) for var in input_symbols]
+    partials = compute_partial_deriv(final_symbolic_expression[0], input_symbols)
 
     # Convert SymPy symbols to dReal variables
     dreal_variables = convert_symbols_to_dreal(input_symbols)
