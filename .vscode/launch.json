@@ -42,7 +42,7 @@
                 "--example", "double_integrator",
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
-                "--num_epochs", "1000",
+                "--num_epochs", "100",
                 "--num_nl", "8",
                 "--num_hl", "0",
                 "--max_iterations", "3",
@@ -100,7 +100,7 @@
                 "--reach_aim", "reach",
                 "--min_with", "none",
                 "--set_type", "set",
-                "--num_nl", "86",
+                "--num_nl", "64",
                 "--num_hl", "0",
                 "--epsilon", "0.2"
             ],
