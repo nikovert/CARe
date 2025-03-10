@@ -100,7 +100,7 @@ def train(model: torch.nn.Module,
             **kwargs
         )
         # Create a learning rate scheduler for fine-tuning
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optim, patience=1000, cooldown=200)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optim, patience=10000, cooldown=2000, factor=0.5, min_lr=1e-6)
         
         # Add custom learning rate logging callback
         def log_lr(optimizer):
@@ -231,7 +231,7 @@ def train(model: torch.nn.Module,
             train_losses.append(train_loss.item())
 
             # Report progress
-            if epoch % epochs_til_checkpoint/10 == 0:
+            if (epoch % epochs_til_checkpoint/10 == 0) or stopping_flag:
                 tqdm.write(f"Epoch {epoch}, Total Loss: {train_loss:.6f},"
                           f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
                           f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}, "

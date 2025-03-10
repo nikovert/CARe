@@ -137,6 +137,7 @@ def process_check_advanced(constraint_data, hamiltonian_expr, value_fn_expr, bou
         hamiltonian_expr: Serialized string representation of the Hamiltonian
         value_fn_expr: Serialized string representation of value function expression
         boundary_fn_expr: Serialized string representation of boundary function expression
+        partials_expr: Dictionary of serialized partial derivative expressions
         
     Returns:
         Tuple of (constraint_id, result_string)
@@ -179,6 +180,8 @@ def process_check_advanced(constraint_data, hamiltonian_expr, value_fn_expr, bou
         logger.debug(f"Process {proc_name} checking constraint {constraint_id}: {constraint_type}")
         
         start_time = time.monotonic()
+        
+        # Execute the constraint check
         result = CheckSatisfiability(constraint, delta)
         check_time = time.monotonic() - start_time
         

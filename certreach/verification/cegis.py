@@ -70,7 +70,7 @@ class CEGISLoop:
         self.timing_history = []
         self.current_symbolic_model = None
         self.min_epsilon = args.min_epsilon
-        self.pruning_percentage = getattr(args, 'pruning_percentage', 0.25)  # Default threshold if not specified
+        self.pruning_percentage = getattr(args, 'pruning_percentage', 0.10)  # Default threshold if not specified
         self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
         
         # Initialize verifier - use the specified solver preference if available
@@ -155,6 +155,27 @@ class CEGISLoop:
                     epsilon=self.current_epsilon  # Pass current epsilon value
                 )
                 self.last_training_time += time.time() - train_start
+        else:
+            # Train loaded model
+            logger.info("Finetuning model")
+            train_start = time.time()
+            train(
+                model=self.example.model,
+                dataset=self.dataset,
+                max_epochs=10*self.args.num_epochs,  # Shorter training period for fine-tuning
+                lr=self.args.lr * 0.5,  # Lower learning rate for fine-tuning
+                epochs_til_checkpoint=self.args.epochs_til_ckpt,
+                model_dir=self.example.root_path,
+                loss_fn=self.example.loss_fn,
+                time_min=self.args.t_min,
+                time_max=self.args.t_max,
+                validation_fn=self.example.validate,
+                device=self.device,
+                is_finetuning=True,  # Retraining pruned model is fine-tuning
+                momentum=0.9,  # Add momentum for fine-tuning
+                epsilon=self.current_epsilon  # Pass current epsilon value
+            )
+            self.last_training_time = time.time() - train_start
 
         while iteration_count < self.max_iterations:
             logger.info("Starting iteration %d with epsilon: %.4f", 

@@ -3,13 +3,16 @@ import sympy
 import logging
 import dreal
 from dreal import Variable, And, Or, Not
-import concurrent.futures
+import multiprocessing as mp
 from certreach.verification.verifier_utils.constraint_builder import (
     prepare_constraint_data_batch,
     process_check_advanced,
     serialize_dreal_expression,
     parse_counterexample as parse_ce
 )
+import os
+import signal
+import time
 
 logger = logging.getLogger(__name__)
 use_if_then_else = False
@@ -68,10 +71,10 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
     timing_info = {}
     
     if execution_mode == "parallel":
-        logger.info("Starting parallel constraint checks...")
+        logger.info("Starting parallel constraint checks with multiprocessing.Pool...")
         
         # Prepare data for parallel execution
-        state_dim = len(state_vars)  # Subtract 1 for time variable
+        state_dim = len(state_vars)
         
         # Use the constraint builder to create serializable constraint data
         constraint_data_batch = prepare_constraint_data_batch(
@@ -82,43 +85,67 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
             reach_mode=reach_mode,
             set_type=set_type
         )
-
-        # Process-based implementation using ProcessPoolExecutor
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            # Submit all constraint checks in parallel
-            futures = []
-            
-            for constraint_data in constraint_data_batch:
-                
-                futures.append(executor.submit(
-                    process_check_advanced,
+        
+        # Create a multiprocessing pool
+        pool = mp.Pool()
+        
+        # Track async results
+        async_results = []
+        
+        # Submit all tasks asynchronously
+        for constraint_data in constraint_data_batch:
+            async_result = pool.apply_async(
+                process_check_advanced,
+                args=(
                     constraint_data,
                     hamiltonian_expr,
                     value_fn_expr,
                     boundary_expr,
                     partials_expr
-                ))
-            
-            # Process results as they complete
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    constraint_id, constraint_result = future.result()
-                    
-                    if constraint_result and not constraint_result.startswith("Error"):
-                        # We found a counterexample
-                        result = constraint_result
-                        logger.info(f"Found counterexample in constraint {constraint_id}; cancelling remaining tasks.")
-                        # Cancel any remaining futures
-                        for f in futures:
-                            if not f.done():
-                                f.cancel()
-                        break
-                    elif constraint_result and constraint_result.startswith("Error"):
-                        logger.error(f"Error in constraint {constraint_id}: {constraint_result}")
-                        
-                except Exception as e:
-                    logger.error(f"Error processing constraint check result: {e}")
+                )
+            )
+            async_results.append(async_result)
         
+        try:
+            # Wait for results and process them as they arrive
+            while async_results and not result:
+                # Check each result that's ready without blocking
+                for i, async_result in enumerate(list(async_results)):
+                    if async_result.ready():
+                        try:
+                            constraint_id, constraint_result = async_result.get(0)  # Non-blocking
+                            async_results.pop(i)  # Remove this result from the list
+                            
+                            if constraint_result and not constraint_result.startswith("Error"):
+                                # We found a counterexample
+                                result = constraint_result
+                                logger.info(f"Found counterexample in constraint {constraint_id}")
+                                break
+                            elif constraint_result and constraint_result.startswith("Error"):
+                                logger.error(f"Error in constraint {constraint_id}: {constraint_result}")
+                        except Exception as e:
+                            logger.error(f"Error getting result: {e}")
+                            async_results.pop(i)  # Remove problematic result
+                
+                # If we found a counterexample or all tasks are done, break
+                if result or not async_results:
+                    break
+                
+                # Sleep briefly to avoid high CPU usage
+                time.sleep(5)
+                
+        finally:
+            # Immediately terminate the pool if a counterexample was found
+            if result:
+                logger.info("Terminating process pool due to counterexample found")
+                pool.terminate()
+            else:
+                logger.info("Closing process pool normally")
+                pool.close()
+                
+            # Always join the pool to clean up resources properly
+            pool.join()
+            
         logger.info("Parallel constraint checks completed.")
     
     elif execution_mode == "sequential":
