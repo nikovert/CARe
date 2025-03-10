@@ -108,13 +108,21 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
         
         try:
             # Wait for results and process them as they arrive
-            while async_results and not result:
-                # Check each result that's ready without blocking
-                for i, async_result in enumerate(list(async_results)):
+            remaining_results = list(range(len(async_results)))  # Track indices of remaining results
+            
+            while remaining_results and not result:
+                # Check each remaining result without modifying the list during iteration
+                i = 0
+                while i < len(remaining_results):
+                    idx = remaining_results[i]
+                    async_result = async_results[idx]
+                    
                     if async_result.ready():
                         try:
                             constraint_id, constraint_result = async_result.get(0)  # Non-blocking
-                            async_results.pop(i)  # Remove this result from the list
+                            
+                            # Remove this result from remaining_results
+                            remaining_results.pop(i)
                             
                             if constraint_result and not constraint_result.startswith("Error"):
                                 # We found a counterexample
@@ -125,14 +133,18 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
                                 logger.error(f"Error in constraint {constraint_id}: {constraint_result}")
                         except Exception as e:
                             logger.error(f"Error getting result: {e}")
-                            async_results.pop(i)  # Remove problematic result
+                            # Still remove this result even if there was an error
+                            remaining_results.pop(i)
+                    else:
+                        # Move to next index only if we didn't remove the current one
+                        i += 1
                 
                 # If we found a counterexample or all tasks are done, break
-                if result or not async_results:
+                if result or not remaining_results:
                     break
                 
                 # Sleep briefly to avoid high CPU usage
-                time.sleep(5)
+                time.sleep(0.1)
                 
         finally:
             # Immediately terminate the pool if a counterexample was found
