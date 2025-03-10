@@ -144,7 +144,7 @@ def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_
                     break
                 
                 # Sleep briefly to avoid high CPU usage
-                time.sleep(0.1)
+                time.sleep(5)
                 
         finally:
             # Immediately terminate the pool if a counterexample was found

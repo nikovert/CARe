@@ -260,9 +260,11 @@ def prepare_constraint_data_batch(state_dim: int,
                                 delta: float,
                                 min_with: str = 'none',
                                 reach_mode: str = 'forward',
-                                set_type: str = 'set') -> List[Dict]:
+                                set_type: str = 'set',
+                                time_subdivisions: int = 4) -> List[Dict]:
     """
     Prepare a batch of constraint data objects for parallel checking.
+    Non-initial time constraints are divided into multiple constraints over subintervals.
     
     Args:
         state_dim: Dimension of state space
@@ -271,26 +273,82 @@ def prepare_constraint_data_batch(state_dim: int,
         min_with: 'none' or 'target'
         reach_mode: 'forward' or 'backward'
         set_type: 'set' or 'tube'
+        time_subdivisions: Number of time subintervals to create (default: 1, no subdivision)
         
     Returns:
         List of constraint data dictionaries
     """
     constraint_data_objects = []
     
-    if min_with == 'target':
-        constraint_data_objects = [
-            create_constraint_data(1, 'target_1', False, state_dim, epsilon, delta, reach_mode, set_type),
-            create_constraint_data(2, 'target_2', False, state_dim, epsilon, delta, reach_mode, set_type),
-            create_constraint_data(3, 'target_3', False, state_dim, epsilon, delta, reach_mode, set_type),
-            create_constraint_data(4, 'boundary_2', True, state_dim, epsilon, delta, reach_mode, set_type)
-        ]
+    # Ensure at least 1 subdivision
+    time_subdivisions = max(1, time_subdivisions)
+    
+    # Create time ranges for subdivisions
+    time_ranges = []
+    if time_subdivisions > 1:
+        step = 1.0 / time_subdivisions
+        for i in range(time_subdivisions):
+            start = i * step
+            end = (i + 1) * step
+            time_ranges.append((start, end))
     else:
-        constraint_data_objects = [
-            create_constraint_data(1, 'derivative_1', False, state_dim, epsilon, delta, reach_mode, set_type),
-            create_constraint_data(2, 'derivative_2', False, state_dim, epsilon, delta, reach_mode, set_type),
-            create_constraint_data(3, 'boundary_1', True, state_dim, epsilon, delta, reach_mode, set_type),
-            create_constraint_data(4, 'boundary_2', True, state_dim, epsilon, delta, reach_mode, set_type)
-        ]
+        time_ranges = [(0.0, 1.0)]  # Default full time horizon
+    
+    # Counter for unique constraint IDs
+    constraint_id = 1
+    
+    if min_with == 'target':
+        # For non-initial time constraints: target_1, target_2, target_3
+        for time_range in time_ranges:
+            constraint_data_objects.append(
+                create_constraint_data(constraint_id, 'target_1', False, state_dim, epsilon, delta, 
+                                      reach_mode, set_type, time_range)
+            )
+            constraint_id += 1
+            
+            constraint_data_objects.append(
+                create_constraint_data(constraint_id, 'target_2', False, state_dim, epsilon, delta, 
+                                      reach_mode, set_type, time_range)
+            )
+            constraint_id += 1
+            
+            constraint_data_objects.append(
+                create_constraint_data(constraint_id, 'target_3', False, state_dim, epsilon, delta,
+                                      reach_mode, set_type, time_range)
+            )
+            constraint_id += 1
+            
+        # Initial time constraint: boundary_2
+        constraint_data_objects.append(
+            create_constraint_data(constraint_id, 'boundary_2', True, state_dim, epsilon, delta, 
+                                  reach_mode, set_type)
+        )
+    else:
+        # For non-initial time constraints: derivative_1, derivative_2
+        for time_range in time_ranges:
+            constraint_data_objects.append(
+                create_constraint_data(constraint_id, 'derivative_1', False, state_dim, epsilon, delta, 
+                                      reach_mode, set_type, time_range)
+            )
+            constraint_id += 1
+            
+            constraint_data_objects.append(
+                create_constraint_data(constraint_id, 'derivative_2', False, state_dim, epsilon, delta, 
+                                      reach_mode, set_type, time_range)
+            )
+            constraint_id += 1
+            
+        # Initial time constraints: boundary_1, boundary_2
+        constraint_data_objects.append(
+            create_constraint_data(constraint_id, 'boundary_1', True, state_dim, epsilon, delta, 
+                                  reach_mode, set_type)
+        )
+        constraint_id += 1
+        
+        constraint_data_objects.append(
+            create_constraint_data(constraint_id, 'boundary_2', True, state_dim, epsilon, delta, 
+                                  reach_mode, set_type)
+        )
     
     return constraint_data_objects
 
