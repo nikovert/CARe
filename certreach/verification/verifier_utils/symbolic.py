@@ -389,7 +389,15 @@ def compute_partial_deriv(final_symbolic_expression: sympy.Matrix, input_symbols
     # Compute symbolic partial derivatives
     partials = [final_symbolic_expression.diff(var) for var in input_symbols]
 
-    # Apply Heaviside simplification
-    partials = [simplify_heaviside_expressions(p) for p in partials]
+    # Iteratively simplify Heaviside expressions until convergence
+    def iterative_simplify(expr):
+        prev = None
+        current = expr
+        while prev != current:
+            prev = current
+            current = simplify_heaviside_expressions(current)
+        return current
+
+    partials = [iterative_simplify(p) for p in partials]
 
     return partials
