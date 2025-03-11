@@ -374,10 +374,12 @@ def simplify_heaviside_expressions(expr: Union[sympy.Expr, sympy.Matrix]) -> Uni
                         return sympy.Mul(*remaining_args, max_term)
                     return max_term
         
-        # Recursively process subexpressions
+        # Recursively process only if the expression contains Heaviside, otherwise return as is
         if e.args:
-            return e.func(*[_simplify_expr(arg) for arg in e.args])
-        
+            if e.has(sympy.Heaviside):
+                return e.func(*[_simplify_expr(arg) for arg in e.args])
+            else:
+                return e
         return e
     
     # Apply the helper function to the expression or matrix
@@ -391,12 +393,9 @@ def compute_partial_deriv(final_symbolic_expression: sympy.Matrix, input_symbols
 
     # Iteratively simplify Heaviside expressions until convergence
     def iterative_simplify(expr):
-        prev = None
-        current = expr
-        while prev != current:
-            prev = current
-            current = simplify_heaviside_expressions(current)
-        return current
+        while expr.has(sympy.Heaviside):
+            expr = simplify_heaviside_expressions(expr)
+        return expr
 
     partials = [iterative_simplify(p) for p in partials]
 
