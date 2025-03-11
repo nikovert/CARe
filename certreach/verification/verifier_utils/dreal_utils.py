@@ -2,200 +2,15 @@ import json
 import sympy
 import logging
 import dreal
-from dreal import Variable, And, Or, Not
-import multiprocessing as mp
-from certreach.verification.verifier_utils.constraint_builder import (
-    prepare_constraint_data_batch,
-    process_check_advanced,
-    serialize_dreal_expression,
-    parse_counterexample as parse_ce
-)
+from dreal import Variable, And, Or, Not, CheckSatisfiability
 from certreach.verification.verifier_utils.symbolic import compute_partial_deriv
-import os
-import signal
-import time
 
 logger = logging.getLogger(__name__)
 use_if_then_else = False
 
-# Global function map for mathematical operations
-func_map = {
-    'sin': dreal.sin,    # Sine function
-    'cos': dreal.cos,    # Cosine function
-    'exp': dreal.exp,    # Exponential function
-    'tanh': dreal.tanh,  # Hyperbolic tangent
-    'abs': abs           # Absolute value
-}
-
-
-def verify_with_dreal(d_real_value_fn, dreal_partials, dreal_variables, compute_hamiltonian, compute_boundary, epsilon=0.5, delta = 0.001,
-                      reach_mode='forward', min_with='none', set_type='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
-    """
-    Verifies if the HJB equation holds using dReal for a double integrator system.
-    
-    Parameters:
-      ...
-      reach_mode (str): 'forward' (default) or 'backward' for reach set computation
-      min_with (str): Specifies minimum value computation method ('none', or 'target')
-      set_type (str): 'set' (default) or 'tube' for target set type
-      execution_mode (str): "parallel" (default) runs constraint checks concurrently,
-                           "sequential" runs the boundary and derivative checks in sequence while timing each.
-    """
-    
-    
-    # Extract state variables and partial derivatives dynamically
-    state_vars = []
-    partials = []
-    for i in range(2, len(dreal_variables) + 1):
-        state_vars.append(dreal_variables[f"x_1_{i}"])
-        partials.append(dreal_partials[f"partial_x_1_{i}"])
-
-    # Use class method for Hamiltonian computation and other setup
-    hamiltonian_value = compute_hamiltonian(state_vars, partials, func_map)
-
-    if set_type == 'tube': 
-        hamiltonian_value = dreal.Max(hamiltonian_value, 0)
-
-    if reach_mode == 'backward':
-        hamiltonian_value = -hamiltonian_value
-
-    hamiltonian_expr = serialize_dreal_expression(hamiltonian_value)
-    
-    # Serialize expressions
-    value_fn_expr = serialize_dreal_expression(d_real_value_fn)
-    partials_expr = {key: serialize_dreal_expression(val) for key, val in dreal_partials.items()}
-    
-    boundary_value = compute_boundary(state_vars)
-    boundary_expr = serialize_dreal_expression(boundary_value)
-
-    result = None
-    timing_info = {}
-    
-    if execution_mode == "parallel":
-        logger.info("Starting parallel constraint checks with multiprocessing.Pool...")
-        
-        # Prepare data for parallel execution
-        state_dim = len(state_vars)
-        
-        # Use the constraint builder to create serializable constraint data
-        constraint_data_batch = prepare_constraint_data_batch(
-            state_dim=state_dim,
-            epsilon=epsilon,
-            delta=delta,
-            min_with=min_with,
-            reach_mode=reach_mode,
-            set_type=set_type
-        )
-        
-        # Create a multiprocessing pool
-        pool = mp.Pool()
-        
-        # Track async results
-        async_results = []
-        
-        # Submit all tasks asynchronously
-        for constraint_data in constraint_data_batch:
-            async_result = pool.apply_async(
-                process_check_advanced,
-                args=(
-                    constraint_data,
-                    hamiltonian_expr,
-                    value_fn_expr,
-                    boundary_expr,
-                    partials_expr
-                )
-            )
-            async_results.append(async_result)
-        
-        try:
-            # Wait for results and process them as they arrive
-            remaining_results = list(range(len(async_results)))  # Track indices of remaining results
-            
-            while remaining_results and not result:
-                # Check each remaining result without modifying the list during iteration
-                i = 0
-                while i < len(remaining_results):
-                    idx = remaining_results[i]
-                    async_result = async_results[idx]
-                    
-                    if async_result.ready():
-                        try:
-                            constraint_id, constraint_result = async_result.get(0)  # Non-blocking
-                            
-                            # Remove this result from remaining_results
-                            remaining_results.pop(i)
-                            
-                            if constraint_result and not constraint_result.startswith("Error"):
-                                # We found a counterexample
-                                result = constraint_result
-                                logger.info(f"Found counterexample in constraint {constraint_id}")
-                                break
-                            elif constraint_result and constraint_result.startswith("Error"):
-                                logger.error(f"Error in constraint {constraint_id}: {constraint_result}")
-                        except Exception as e:
-                            logger.error(f"Error getting result: {e}")
-                            # Still remove this result even if there was an error
-                            remaining_results.pop(i)
-                    else:
-                        # Move to next index only if we didn't remove the current one
-                        i += 1
-                
-                # If we found a counterexample or all tasks are done, break
-                if result or not remaining_results:
-                    break
-                
-                # Sleep briefly to avoid high CPU usage
-                time.sleep(5)
-                
-        finally:
-            # Immediately terminate the pool if a counterexample was found
-            if result:
-                logger.info("Terminating process pool due to counterexample found")
-                pool.terminate()
-            else:
-                logger.info("Closing process pool normally")
-                pool.close()
-                
-            # Always join the pool to clean up resources properly
-            pool.join()
-            
-        logger.info("Parallel constraint checks completed.")
-    
-    elif execution_mode == "sequential":
-        # ... existing sequential execution code ...
-        pass
-    else:
-        logger.error(f"Unknown execution_mode: {execution_mode}.")
-    
-    # ... existing result processing code ...
-    
-    if not result:
-        success = True  # HJB Equation is satisfied
-        logger.info("No counterexamples found in checks.")
-        verification_result = {
-            "epsilon": epsilon,
-            "result": "HJB Equation Satisfied",
-            "counterexample": None,
-            "timing": timing_info
-        }
-    else:
-        success = False  # HJB Equation is not satisfied
-        verification_result = {
-            "epsilon": epsilon,
-            "result": "HJB Equation Not Satisfied",
-            "counterexample": parse_ce(str(result)),
-            "timing": timing_info
-        }
-    
-    # Optionally save result to file
-    result_file = f"{save_directory}/dreal_result.json"
-    with open(result_file, "w") as f:
-        json.dump(verification_result, f, indent=4)
-    logger.debug(f"Saved result to {result_file}")
-
-    counterexample = parse_ce(str(result)) if not success else None
-
-    return success, counterexample
+def check_with_dreal(constraints, delta, **kwargs):
+    result = CheckSatisfiability(constraints, delta)
+    return result
 
 def parse_counterexample(result_str):
     """
@@ -415,63 +230,26 @@ def extract_dreal_partials(final_symbolic_expression):
     d_real_value_fn = sympy_to_dreal_converter(dreal_variables, final_symbolic_expression[0])
 
     results = {
-        "input_symbols": input_symbols,
-        "partials": partials,
-        "dreal_variables": dreal_variables,
-        "dreal_partials": dreal_partials,
-        "d_real_value_fn": d_real_value_fn,
-        **{f"sympy_partial_{i+1}": partial for i, partial in enumerate(partials)},
-        **{f"dreal_partial_{i+1}": dreal_partials[f"partial_{str(input_symbols[i])}"] 
-           for i in range(len(input_symbols))},
+        "variables": dreal_variables,
+        "partials": dreal_partials,
+        "value_fn": d_real_value_fn,
         "additional_conditions": additional_conditions
     }
     return results
 
-def process_dreal_result(json_path):
-    """
-    Process the dReal result from a JSON file to determine whether the HJB Equation is satisfied,
-    display the epsilon value, and optionally return the counterexample if verification is not satisfied.
-
-    Args:
-        json_path (str): Path to the JSON file containing dReal results.
-
-    Returns:
-        dict: Parsed dReal result including epsilon, result details, and counterexample range if applicable.
-    """
-    logger = logging.getLogger(__name__)
-    
-    try:
-        # Load the JSON result from the specified file
-        with open(json_path, "r") as file:
-            dreal_result = json.load(file)
-
-        # Extract epsilon value and result
-        epsilon = dreal_result.get("epsilon", "Unknown")
-        result = dreal_result.get("result", "Unknown")
-        logger.info(f"Epsilon: {epsilon}")
-
-        # Check and process the result
-        if "HJB Equation Satisfied" in result:
-            logger.info("dReal verification satisfied. HJB Equation is satisfied.")
-            logger.info(f"Reachable Set: {dreal_result.get('set', 'Unknown')}")
-            return {"epsilon": epsilon, "result": result, "counterexample": None}
-        else:
-            logger.info("dReal verification NOT satisfied. Counterexample found:")
-            counterexample = parse_counterexample(result)
-            if counterexample:
-                for variable, (lower, upper) in counterexample.items():
-                    logger.debug(f"  {variable}: [{lower}, {upper}]")
-            return {"epsilon": epsilon, "result": result, "counterexample": counterexample}
-
-    except FileNotFoundError:
-        logger.error(f"File not found at {json_path}.")
-        return {"error": "FileNotFound"}
-    except json.JSONDecodeError:
-        logger.error(f"Unable to parse JSON from the file at {json_path}.")
-        return {"error": "JSONDecodeError"}
-    except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}")
-        return {"error": str(e)}
-
-
-
+# Global function map for SMT specific operations
+dreal_function_map = {
+    'solver_name': 'dreal',
+    'sin': dreal.sin,    # Sine function
+    'cos': dreal.cos,    # Cosine function
+    'exp': dreal.exp,    # Exponential function
+    'tanh': dreal.tanh,  # Hyperbolic tangent
+    'abs': abs,           # Absolute value
+    'max': dreal.Max,    # Maximum value
+    'min': dreal.Min,     # Minimum value
+    'and': And,          # Logical AND
+    'or': Or,            # Logical OR
+    'not': Not,           # Logical NOT
+    'solve': check_with_dreal,
+    'variable': Variable
+}
