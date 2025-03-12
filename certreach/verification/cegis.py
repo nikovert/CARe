@@ -45,8 +45,6 @@ class CEGISLoop:
         prune_after_initial (bool): Whether to prune after initial training.
         verifier (SMTVerifier): The verifier instance used for formal verification.
         initial_lr (float): Initial learning rate for training.
-        fine_tune_lr (float): Learning rate for fine-tuning after counterexamples.
-        fine_tune_epochs (int): Number of epochs for fine-tuning.
         dataset (ReachabilityDataset): Training dataset instance.
         last_training_time (float): Duration of the most recent training phase.
     """
@@ -78,9 +76,7 @@ class CEGISLoop:
         self.verifier = SMTVerifier(device=self.device, solver_preference=solver_preference)
 
         self.initial_lr = args.lr
-        self.fine_tune_lr = getattr(args, 'fine_tune_lr', args.lr * 0.1)  # Configurable fine-tuning learning rate
-        self.fine_tune_epochs = getattr(args, 'fine_tune_epochs', args.num_epochs // 4)  # Configurable fine-tuning epochs
-                
+                 
         # Initialize dataset if not already existing
         self.dataset = ReachabilityDataset(
             batch_size=args.batch_size,
@@ -256,7 +252,7 @@ class CEGISLoop:
                     model=self.example.model,
                     dataset=self.dataset,
                     max_epochs=10*self.args.num_epochs,
-                    lr=self.fine_tune_lr,
+                    lr=self.args.lr*0.5,
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,

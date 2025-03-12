@@ -362,8 +362,6 @@ class SMTVerifier:
         else:
             NotImplementedError(f"Solver {solver} is not yet supported.")
 
-
-        self.delta = min(epsilon / 10, 0.01)
         success, counterexample = verify_with_SMT(
             value_fn=result["value_fn"],
             partials_variables=result["partials"],
