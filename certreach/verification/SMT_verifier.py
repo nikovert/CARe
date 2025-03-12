@@ -157,13 +157,6 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
         NotImplementedError("Sequential execution mode is not yet implemented.")
     else:
         logger.error(f"Unknown execution_mode: {execution_mode}.")
-    
-    # Convert counterexample from interval to point (if dreal)
-    if solver == 'dreal':
-        result = parse_ce(str(result))
-    else:
-        result = result
-
 
     if not result:
         success = True  # HJB Equation is satisfied
@@ -390,7 +383,7 @@ class SMTVerifier:
     
         # Convert counterexample to tensor format if found
         if not success and counterexample:
-            if counterexample is dict:
+            if type(counterexample) is dict:
                 ce_list = []
                 for key in sorted(counterexample.keys()):
                     if key.startswith('x_'):  # Only include state variables
