@@ -229,6 +229,8 @@ class SMTVerifier:
             else:
                 return 'z3'
         else:
+            if self.solver_preference == 'dreal':
+                self.delta = 0.01
             return self.solver_preference
 
     def validate_counterexample(
