@@ -1,6 +1,6 @@
-import json
 import sympy
 import logging
+from typing import Dict, Any
 import dreal
 from dreal import Variable, And, Or, Not, CheckSatisfiability
 from certreach.verification.verifier_utils.symbolic import compute_partial_deriv
@@ -11,6 +11,38 @@ use_if_then_else = False
 def check_with_dreal(constraints, delta, **kwargs):
     result = CheckSatisfiability(constraints, delta)
     return result
+
+def parse_dreal_expression(expr_str: str, variables: Dict[str, Any], func_map: Dict[str, Any]) -> Any:
+    """
+    Parse a string representation of a dReal/z3 expression and rebuild it.
+    This is a simplified parser for demonstration purposes.
+    
+    Args:
+        expr_str: String representation of a dReal expression
+        variables: Dictionary mapping variable names to dReal/z3 Variable objects
+        func_map: Dictionary mapping function names to their implementations
+    
+    Returns:
+        Rebuilt dReal expression
+    """
+    # Replace variable names with their dReal/z3 Variable objects
+    for var_name in variables.keys():
+        expr_str = expr_str.replace(var_name, f"variables['{var_name}']")
+    
+    # Replace function names using the provided func_map
+    for func_name, func in func_map.items():
+        if callable(func) and func_name not in ["variable"]:
+            expr_str = expr_str.replace(func_name, f"func_map['{func_name}']")
+    
+    try:
+        # Evaluate the expression string to rebuild it
+        # Use eval with the necessary context
+        context = {"variables": variables, "func_map": func_map}
+        return eval(expr_str, context)
+    except Exception as e:
+        logger.error(f"Error parsing expression '{expr_str}': {e}")
+        return None
+
 
 def parse_counterexample(result_str):
     """
@@ -250,6 +282,5 @@ dreal_function_map = {
     'and': And,          # Logical AND
     'or': Or,            # Logical OR
     'not': Not,           # Logical NOT
-    'solve': check_with_dreal,
-    'variable': Variable
+    'variable': Variable,
 }

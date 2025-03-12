@@ -5,6 +5,9 @@ from certreach.verification.verifier_utils.symbolic import compute_partial_deriv
 
 logger = logging.getLogger(__name__)
 
+def parse_z3_expression(expression):
+    return z3.deserialize(expression)
+
 def _check_constraint(constraints) -> z3.Model:
     """Helper function to check constraints with Z3."""
     solver = z3.Solver()
@@ -194,9 +197,8 @@ z3_function_map = {
     'abs': z3.Abs,
     'max': z3_max,  # replaced z3.max with custom z3_max
     'min': z3_min,  # replaced z3.min with custom z3_min
-    'And': z3.And,
-    'Or': z3.Or, 
-    'Not': z3.Not,
-    'solve': check_with_z3,
+    'and': z3.And,
+    'or': z3.Or, 
+    'not': z3.Not,
     'variable': z3.Real
 }

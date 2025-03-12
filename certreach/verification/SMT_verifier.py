@@ -51,14 +51,13 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
     if reach_mode == 'backward':
         hamiltonian_value = -hamiltonian_value
 
-    hamiltonian_expr = serialize_expression(hamiltonian_value)
-    
-    # Serialize expressions
-    value_fn_expr = serialize_expression(value_fn)
-    partials_expr = {key: serialize_expression(val) for key, val in partials_variables.items()}
-    
     boundary_value = compute_boundary(state_vars)
-    boundary_expr = serialize_expression(boundary_value)
+
+    # Serialize expressions
+    hamiltonian_expr = serialize_expression(hamiltonian_value, solver)
+    value_fn_expr = serialize_expression(value_fn, solver)
+    partials_expr = {key: serialize_expression(val, solver) for key, val in partials_variables.items()}
+    boundary_expr = serialize_expression(boundary_value, solver)
 
     result = None
     timing_info = {}
@@ -159,6 +158,13 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
     else:
         logger.error(f"Unknown execution_mode: {execution_mode}.")
     
+    # Convert counterexample from interval to point (if dreal)
+    if solver == 'dreal':
+        result = parse_ce(str(result))
+    else:
+        result = result
+
+
     if not result:
         success = True  # HJB Equation is satisfied
         logger.info("No counterexamples found in checks.")
@@ -384,16 +390,19 @@ class SMTVerifier:
     
         # Convert counterexample to tensor format if found
         if not success and counterexample:
-            ce_list = []
-            for key in sorted(counterexample.keys()):
-                if key.startswith('x_'):  # Only include state variables
-                    interval = counterexample[key]
-                    # Take midpoint of interval as the counterexample point
-                    ce_list.append((interval[0] + interval[1]) / 2)
-            
-            if ce_list:
-                counterexample = torch.tensor(ce_list, device=self.device)
-                logger.info(f"Counterexample found: {counterexample}")
+            if counterexample is dict:
+                ce_list = []
+                for key in sorted(counterexample.keys()):
+                    if key.startswith('x_'):  # Only include state variables
+                        interval = counterexample[key]
+                        # Take midpoint of interval as the counterexample point
+                        ce_list.append((interval[0] + interval[1]) / 2)
+                
+                if ce_list:
+                    counterexample = torch.tensor(ce_list, device=self.device)
+                    logger.info(f"Counterexample found: {counterexample}")
+            else:
+                counterexample = torch.tensor(counterexample, device=self.device)
         else:
             counterexample = None
         

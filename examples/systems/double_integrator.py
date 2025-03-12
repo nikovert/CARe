@@ -79,7 +79,7 @@ def double_integrator_hamiltonian(states, partials, func_map, input_bounds, reac
             ham += sign * input_magnitude * torch.abs(p2)
         else:
             abs_p2 = func_map['abs'](p2) if 'abs' in func_map else abs(p2)
-            ham += sign * float(input_magnitude) * abs_p2
+            ham += float(sign * input_magnitude) * abs_p2
     else:
         # Asymmetric bounds branch with arithmetic formulation
         if using_torch:

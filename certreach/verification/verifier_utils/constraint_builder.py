@@ -2,8 +2,8 @@ import logging
 from typing import Dict, List, Any, Tuple, Optional, Callable
 import time
 import multiprocessing as mp
-from certreach.verification.verifier_utils.dreal_utils import dreal_function_map
-from certreach.verification.verifier_utils.z3_utils import z3_function_map
+from certreach.verification.verifier_utils.dreal_utils import dreal_function_map, check_with_dreal, parse_dreal_expression
+from certreach.verification.verifier_utils.z3_utils import z3_function_map, check_with_z3, parse_z3_expression
 
 function_maps = {
     'z3': z3_function_map,
@@ -12,36 +12,6 @@ function_maps = {
 
 logger = logging.getLogger(__name__)
 
-def parse_expression(expr_str: str, variables: Dict[str, Any], func_map: Dict[str, Any]) -> Any:
-    """
-    Parse a string representation of a dReal/z3 expression and rebuild it.
-    This is a simplified parser for demonstration purposes.
-    
-    Args:
-        expr_str: String representation of a dReal expression
-        variables: Dictionary mapping variable names to dReal/z3 Variable objects
-        func_map: Dictionary mapping function names to their implementations
-    
-    Returns:
-        Rebuilt dReal expression
-    """
-    # Replace variable names with their dReal/z3 Variable objects
-    for var_name in variables.keys():
-        expr_str = expr_str.replace(var_name, f"variables['{var_name}']")
-    
-    # Replace function names using the provided func_map
-    for func_name, func in func_map.items():
-        if callable(func) and func_name not in ["solve", "variable"]:
-            expr_str = expr_str.replace(func_name, f"func_map['{func_name}']")
-    
-    try:
-        # Evaluate the expression string to rebuild it
-        # Use eval with the necessary context
-        context = {"variables": variables, "func_map": func_map}
-        return eval(expr_str, context)
-    except Exception as e:
-        logger.error(f"Error parsing expression '{expr_str}': {e}")
-        return None
 
 def rebuild_constraint(func_map,
                     constraint_type: str, 
@@ -79,18 +49,24 @@ def rebuild_constraint(func_map,
             if var_name in variables:
                 state_vars.append(variables[var_name])
         
-        # Parse expressions using func_map
-        value_fn = parse_expression(value_fn_expr, variables, func_map)
-        boundary_value = parse_expression(boundary_fn_expr, variables, func_map)
+        # Parse expressions
+        if func_map['solver_name'] == 'z3':
+            parse = parse_z3_expression
+        elif func_map['solver_name'] == 'dreal':
+            parse = lambda s: parse_dreal_expression(s, variables, func_map)
+        else:
+            ValueError(f"Unknown solver: {func_map['solver_name']}")
+
+        value_fn = parse(value_fn_expr)
+        boundary_value = parse(boundary_fn_expr)
+        hamiltonian_value = parse(hamiltonian_expr)
         
         # Get partial derivatives
-        dv_dt = parse_expression(partials_expr.get(f"partial_x_1_1", "0"), variables, func_map)
+        dv_dt = parse(partials_expr.get(f"partial_x_1_1", "0"))
         for i in range(2, len(variables) + 1):
             partial_name = f"partial_x_1_{i}"
             if partial_name in partials_expr:
-                partials.append(parse_expression(partials_expr[partial_name], variables, func_map))
-        
-        hamiltonian_value = parse_expression(hamiltonian_expr, variables, func_map)
+                partials.append(parse(partials_expr[partial_name]))
         
         # Define state constraints
         if is_initial_time:
@@ -182,7 +158,13 @@ def process_check_advanced(solver_name, constraint_data, hamiltonian_expr, value
         start_time = time.monotonic()
         
         # Execute the constraint check
-        result = func_map['solve'](constraint, delta)
+        if solver_name == 'z3':
+            result = check_with_z3(constraint)
+        elif solver_name == 'dreal':
+            result = check_with_dreal(constraint, delta)
+        else:
+            ValueError(f"Unknown solver: {solver_name}")
+
         check_time = time.monotonic() - start_time
         
         if result:
@@ -196,7 +178,7 @@ def process_check_advanced(solver_name, constraint_data, hamiltonian_expr, value
         logger.error(f"Process {mp.current_process().name} error: {e}")
         return constraint_data.get('constraint_id', -1), f"Error: {str(e)}"
 
-def serialize_expression(expr) -> str:
+def serialize_expression(expr, solver) -> str:
     """
     Convert a dReal/z3 expression to a serializable string format.
     
@@ -206,14 +188,10 @@ def serialize_expression(expr) -> str:
     Returns:
         String representation of the expression
     """
-    expr_str = str(expr).replace('\n', '')
-    try:
-        # Attempt to compile the expression to check for syntax errors
-        compile(expr_str, '<string>', 'eval')
-        return expr_str
-    except SyntaxError as e:
-        logger.error(f"Syntax error in expression: {e}")
-        return None
+    if solver == 'z3':
+        return expr.serialize()
+    else:
+        return str(expr)
 
 def create_constraint_data(constraint_id: int,
                           constraint_type: str,
@@ -268,7 +246,7 @@ def prepare_constraint_data_batch(state_dim: int,
                                 min_with: str = 'none',
                                 reach_mode: str = 'forward',
                                 set_type: str = 'set',
-                                time_subdivisions: int = 4) -> List[Dict]:
+                                time_subdivisions: int = 1) -> List[Dict]:
     """
     Prepare a batch of constraint data objects for parallel checking.
     Non-initial time constraints are divided into multiple constraints over subintervals.
@@ -371,21 +349,26 @@ def parse_counterexample(result_str: str) -> Dict[str, Tuple[float, float]]:
     """
     counterexample = {}
     try:
-        for line in result_str.strip().split('\n'):
-            # Parse each variable and its range
-            if ':' not in line:
-                continue
-                
-            variable, value_range = line.split(':')
-            value_range = value_range.strip()
-            
-            if value_range.startswith('[') and value_range.endswith(']'):
-                # Extract lower and upper bounds
-                bounds = value_range.strip('[] ').split(',')
-                if len(bounds) == 2:
-                    lower, upper = map(float, bounds)
-                    counterexample[variable.strip()] = (lower, upper)
+        # Check if parsing an interval
+        if ':' in result_str:
+            for line in result_str.strip().split('\n'):
+                # Parse each variable and its range
+                if ':' not in line:
+                    continue
                     
+                variable, value_range = line.split(':')
+                value_range = value_range.strip()
+                
+                if value_range.startswith('[') and value_range.endswith(']'):
+                    # Extract lower and upper bounds
+                    bounds = value_range.strip('[] ').split(',')
+                    if len(bounds) == 2:
+                        lower, upper = map(float, bounds)
+                        counterexample[variable.strip()] = (lower, upper)
+        else:
+            clean_str = result_str.strip('[]')
+            # Extract all floating point numbers
+            counterexample = [float(x) for x in clean_str.split(',')]
     except Exception as e:
         logger.error(f"Failed to parse counterexample: {e}")
         return None
