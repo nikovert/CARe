@@ -27,7 +27,7 @@ def train(model: torch.nn.Module,
           clip_grad: bool = True, 
           use_amp: bool = True,
           l1_lambda: float = 1e-5,
-          weight_decay: float = 1e-4,
+          weight_decay: float = 1e-5,
           is_finetuning: bool = False,
           momentum: float = 0.9,
           **kwargs
@@ -52,8 +52,8 @@ def train(model: torch.nn.Module,
         device: Device to use for training (default: CUDA if available, else CPU)
         clip_grad: Whether to clip gradients during training (default: True)
         use_amp: Whether to use automatic mixed precision (default: True for CUDA)
-        l1_lambda: L1 regularization strength (default: 1e-4)
-        weight_decay: L2 regularization strength (default: 1e-3)
+        l1_lambda: L1 regularization strength (default: 1e-5)
+        weight_decay: L2 regularization strength (default: 1e-5)
         is_finetuning: Whether this is a fine-tuning run (default: False)
         momentum: Momentum parameter for SGD when fine-tuning (default: 0.9)
         **kwargs: Additional arguments to pass to the optimizer
@@ -80,7 +80,7 @@ def train(model: torch.nn.Module,
     
     # Enable automatic mixed precision for CUDA devices
     use_amp = device.type == 'cuda'
-    scaler = torch.amp.GradScaler() if use_amp else None  # Updated GradScaler import
+    scaler = torch.amp.GradScaler() if use_amp else None
     
     # Enable CUDA optimizations
     if device.type == 'cuda':
@@ -134,6 +134,8 @@ def train(model: torch.nn.Module,
 
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     model.checkpoint_dir = checkpoints_dir  # Set checkpoint directory for model
+    patience = 0
+    max_lambda = 0.1
 
     with tqdm(total=max_epochs) as pbar:
         train_losses = []
@@ -195,7 +197,7 @@ def train(model: torch.nn.Module,
                 # Apply weights to losses and normalize by batch size
                 max_train_loss = sum(loss.max() * loss_weights.get(name, 1.0)
                                 for name, loss in losses.items())
-                max_lambda = 0.1
+                
                 train_loss = mean_train_loss + max_lambda*max_train_loss
                 
                 # Calculate total loss and add L1 regularization using PyTorch's built-in function
@@ -211,7 +213,10 @@ def train(model: torch.nn.Module,
             if dichlet_condition_SAT and (curriculum.is_pretraining or diff_constraint_SAT):
                 progress_flag = True
                 if curriculum.get_progress() == 1.0 and losses['diff_constraint_hom'].max() < epsilon*0.95:
-                    stopping_flag = epoch > 100  # Stop after minimum of 100 epochs
+                    patience += 1
+                    stopping_flag = patience > 1000  # Stop after minimum of 1000 consistent epochs
+                else:
+                    patience = 0
             else:
                 progress_flag = False
 

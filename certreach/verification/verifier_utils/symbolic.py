@@ -13,7 +13,7 @@ def sine_transform(x: sympy.Basic, frequency: float = 30.0) -> sympy.Basic:
 
 def relu_primitive_transform(x: sympy.Basic) -> sympy.Basic:
     """Helper function for ReLU primitive transformation."""
-    return 0.5 * sympy.Max(0, x)**2
+    return sympy.Max(0, x)**2
 
 def power_transform(x: sympy.Symbol, power: int, is_time: bool = False) -> sympy.Symbol:
     """Helper function for polynomial transformation."""

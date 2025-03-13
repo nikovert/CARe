@@ -97,9 +97,9 @@ def parse_args():
                   help='Compare results with true values after verification')
 
     # Dataset Settings
-    p.add_argument('--percentage_in_counterexample', type=float, default=20.0,
+    p.add_argument('--percentage_in_counterexample', type=float, default=5.0,
                   help='Percentage of points to sample near counterexamples')
-    p.add_argument('--percentage_at_t0', type=float, default=20.0,
+    p.add_argument('--percentage_at_t0', type=float, default=2.0,
                   help='Percentage of points to sample at t=0')
 
     args = p.parse_args()

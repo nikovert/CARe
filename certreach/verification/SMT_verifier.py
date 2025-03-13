@@ -219,18 +219,18 @@ class SMTVerifier:
         
         if self.solver_preference in ['z3', 'marabou'] and has_trig:
             logger.info("Model contains trigonometric functions: Using dReal for verification")
-            self.delta = 0.01
+            self.delta = 0.001
             return 'dreal'  # Use dReal for models with trigonometric functions
         elif self.solver_preference == 'auto':
             if has_trig:
                 logger.info("Model contains trigonometric functions: Using dReal for verification")
-                self.delta = 0.01  # Default delta for dReal verification
+                self.delta = 0.001  # Default delta for dReal verification
                 return 'dreal'
             else:
                 return 'z3'
         else:
             if self.solver_preference == 'dreal':
-                self.delta = 0.01
+                self.delta = 0.001
             return self.solver_preference
 
     def validate_counterexample(

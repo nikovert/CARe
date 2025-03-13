@@ -101,18 +101,17 @@ class ReLUPrimitive(torch.nn.Module):
         
     def forward(self, input):
         """
-        Computes the antiderivative of ReLU: f(x) = 0.5 * x^2 if x > 0, 0 otherwise.
+        Computes the antiderivative of ReLU: f(x) = x^2 if x > 0, 0 otherwise.
         
         Args:
             input (torch.Tensor): Input tensor
             
         Returns:
-            torch.Tensor: 0.5 * x^2 where x > 0, 0 otherwise
+            torch.Tensor: x^2 where x > 0, 0 otherwise
         """
-        # Use positive part of input from ReLU calculation to compute 0.5 * x^2
+        # Use positive part of input from ReLU calculation to compute x^2
         # More efficient than using torch.where and computing twice
-        positive_part = self.relu(input)
-        return 0.5 * positive_part * positive_part
+        return torch.pow(torch.relu(input), 2)
 
 class PolynomialFunction(torch.autograd.Function):
     """Custom autograd function for polynomial computation with special time handling."""

@@ -123,8 +123,11 @@
                 "--set_type", "set",
                 "--num_nl", "128",
                 "--num_hl", "0",
-                "--epsilon", "0.2",
-                "--model_type", "relu_primitive"
+                "--batch_size", "25600",
+                "--epsilon", "0.1",
+                "--model_type", "relu_primitive",
+                "--solver", "dreal",
+                "--load_model"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -175,7 +178,8 @@
                 "--num_nl", "128",
                 "--num_hl", "0",
                 "--epsilon", "0.2",
-                "--model_type", "relu_primitive"
+                "--model_type", "relu_primitive",
+                "--solver", "dreal", 
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
