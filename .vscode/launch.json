@@ -52,6 +52,7 @@
                 "--min_with", "none",
                 "--set_type", "set",
                 "--model_type", "relu_primitive",
+                "--solver", "dreal",
             ],
             "console": "integratedTerminal",
             "justMyCode": true,

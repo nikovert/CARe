@@ -89,15 +89,10 @@ class ReLUPrimitive(torch.nn.Module):
     """Activation function whose derivative is ReLU.
     
     This is the antiderivative of the ReLU function:
-    f(x) = 0.5 * x^2 for x > 0, 0 otherwise.
+    f(x) = x^2 for x > 0, 0 otherwise.
     """
-    def __init__(self, inplace=False):
+    def __init__(self):
         super().__init__()
-        # inplace parameter for API consistency with other PyTorch activations
-        # (doesn't actually affect computation since this is a mathematical operation)
-        self.inplace = inplace
-        # Reference to standard ReLU to demonstrate relationship
-        self.relu = torch.nn.ReLU(inplace=False)
         
     def forward(self, input):
         """

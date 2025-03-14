@@ -27,7 +27,10 @@ def parse_dreal_expression(expr_str: str, variables: Dict[str, Any], func_map: D
     """
     # Replace variable names with their dReal/z3 Variable objects
     for var_name in variables.keys():
-        expr_str = expr_str.replace(var_name, f"variables['{var_name}']")
+        if "partial" not in var_name:
+            expr_str = expr_str.replace(var_name, f"variables['{var_name}']")
+    
+    expr_str = expr_str.replace("partial_variables['", "variables['partial_")
     
     # Replace function names using the provided func_map
     for func_name, func in func_map.items():
@@ -242,11 +245,15 @@ def extract_dreal_partials(final_symbolic_expression):
     input_symbols.sort(key=lambda x: int(str(x).split('_')[2]))  # Sort by index
     input_symbols = sympy.Matrix(input_symbols)
 
+    symbol_list = [*input_symbols]
+    for sym in input_symbols:
+        symbol_list.append(sympy.Symbol(f"partial_{sym}"))
+
     # Compute symbolic partial derivatives
     partials = compute_partial_deriv(final_symbolic_expression[0], input_symbols)
 
     # Convert SymPy symbols to dReal variables
-    dreal_variables = convert_symbols_to_dreal(input_symbols)
+    dreal_variables = convert_symbols_to_dreal(symbol_list)
 
     dreal_partials = {}
     additional_conditions = []

@@ -3,11 +3,13 @@ from typing import Dict, List, Any, Tuple, Optional, Callable
 import time
 import multiprocessing as mp
 from certreach.verification.verifier_utils.dreal_utils import dreal_function_map, check_with_dreal, parse_dreal_expression
+from certreach.verification.verifier_utils.marabou_utils import check_with_marabou
 from certreach.verification.verifier_utils.z3_utils import z3_function_map, check_with_z3, parse_z3_expression
 
 function_maps = {
     'z3': z3_function_map,
-    'dreal': dreal_function_map
+    'dreal': dreal_function_map,
+    'marabou': dreal_function_map # Marabou uses dReal function map
 }
 
 logger = logging.getLogger(__name__)
@@ -40,15 +42,19 @@ def rebuild_constraint(func_map,
     """
     try:
         # Extract time and state variables
-        t = variables.get("x_1_1")
         state_vars = []
-        partials = []
-        
-        for i in range(2, len(variables) + 1):
-            var_name = f"x_1_{i}"
-            if var_name in variables:
-                state_vars.append(variables[var_name])
-        
+        partial_state_vars = []
+        for key, value in variables.items():
+            if key.endswith("_1"):
+                continue
+            if key.startswith("x_1_"):
+                state_vars.append(value)
+            elif key.startswith("partial_x_1_"):
+                partial_state_vars.append(value)
+
+        t = variables.get('x_1_1')
+        dv_dt = variables.get('partial_x_1_1')
+
         # Parse expressions
         if func_map['solver_name'] == 'z3':
             parse = parse_z3_expression
@@ -61,12 +67,8 @@ def rebuild_constraint(func_map,
         boundary_value = parse(boundary_fn_expr)
         hamiltonian_value = parse(hamiltonian_expr)
         
-        # Get partial derivatives
-        dv_dt = parse(partials_expr.get(f"partial_x_1_1", "0"))
-        for i in range(2, len(variables) + 1):
-            partial_name = f"partial_x_1_{i}"
-            if partial_name in partials_expr:
-                partials.append(parse(partials_expr[partial_name]))
+        # Add partial constraints
+        partial_constraints = [func_map['and'](variables[key] == parse(expr)) for key, expr in partials_expr.items()]
         
         # Define state constraints
         if is_initial_time:
@@ -82,16 +84,16 @@ def rebuild_constraint(func_map,
         elif constraint_type == 'boundary_2':
             return func_map['and'](time_constraint, *space_constraints, value_fn - boundary_value < -epsilon)
         elif constraint_type == 'derivative_1':
-            return func_map['and'](time_constraint, *space_constraints, dv_dt + hamiltonian_value < -epsilon)
+            return func_map['and'](time_constraint, *space_constraints, dv_dt + hamiltonian_value < -epsilon, *partial_constraints)
         elif constraint_type == 'derivative_2':
-            return func_map['and'](time_constraint, *space_constraints, dv_dt + hamiltonian_value > epsilon)
+            return func_map['and'](time_constraint, *space_constraints, dv_dt + hamiltonian_value > epsilon, *partial_constraints)
         elif constraint_type == 'target_1':
             return func_map['and'](time_constraint, *space_constraints, 
-                      func_map['and'](dv_dt + hamiltonian_value < -epsilon, value_fn - boundary_value < -epsilon))
+                      func_map['and'](dv_dt + hamiltonian_value < -epsilon, value_fn - boundary_value < -epsilon), *partial_constraints)
         elif constraint_type == 'target_2':
-            return func_map['and'](time_constraint, *space_constraints, dv_dt + hamiltonian_value > epsilon)
+            return func_map['and'](time_constraint, *space_constraints, dv_dt + hamiltonian_value > epsilon, *partial_constraints)
         elif constraint_type == 'target_3':
-            return func_map['and'](time_constraint, *space_constraints, value_fn - boundary_value > epsilon)
+            return func_map['and'](time_constraint, *space_constraints, value_fn - boundary_value > epsilon, *partial_constraints)
         else:
             logger.error(f"Unknown constraint type: {constraint_type}")
             return None
@@ -128,42 +130,50 @@ def process_check_advanced(solver_name, constraint_data, hamiltonian_expr, value
         # Create variables
         time_var = func_map['variable']("x_1_1")
         state_vars = [func_map['variable'](f"x_1_{i+2}") for i in range(len(constraint_data['space_constraints']))]
+        partial_vars = [func_map['variable'](str(key)) for key, _ in partials_expr.items()]
         
         # Create dictionary of all variables
         variables = {"x_1_1": time_var}
         for i, var in enumerate(state_vars):
-            variables[f"x_1_{i+2}"] = var
+            variables[str(var)] = var
+        for i, var in enumerate(partial_vars):
+            variables[str(var)] = var
         
-        # Use rebuild_constraint to create the constraint
-        constraint = rebuild_constraint(
-            func_map=func_map,
-            constraint_type=constraint_type,
-            variables=variables,
-            value_fn_expr=value_fn_expr,
-            partials_expr=partials_expr,
-            boundary_fn_expr=boundary_fn_expr,
-            hamiltonian_expr=hamiltonian_expr,
-            epsilon=epsilon,
-            is_initial_time=is_initial_time
-        )
-        
-        if constraint is None:
-            logger.error(f"Failed to build constraint {constraint_id}")
-            return constraint_id, f"Error: Failed to build constraint {constraint_type}"
-        
-        # Check constraint
-        proc_name = mp.current_process().name
-        logger.debug(f"Process {proc_name} checking constraint {constraint_id}: {constraint_type}")
-        
-        start_time = time.monotonic()
-        
-        # Execute the constraint check
-        if solver_name == 'z3':
-            result = check_with_z3(constraint)
-        elif solver_name == 'dreal':
-            result = check_with_dreal(constraint, delta)
+        if solver_name == 'marabou' and constraint_type not in ['boundary_1', 'boundary_2']:
+            check_with_marabou(constraint_data, 
+                                partials_expr,
+                                hamiltonian_expr)
         else:
-            ValueError(f"Unknown solver: {solver_name}")
+            # Use rebuild_constraint to create the constraint
+            constraint = rebuild_constraint(
+                func_map=func_map,
+                constraint_type=constraint_type,
+                variables=variables,
+                value_fn_expr=value_fn_expr,
+                partials_expr=partials_expr,
+                boundary_fn_expr=boundary_fn_expr,
+                hamiltonian_expr=hamiltonian_expr,
+                epsilon=epsilon,
+                is_initial_time=is_initial_time
+            )
+            
+            if constraint is None:
+                logger.error(f"Failed to build constraint {constraint_id}")
+                return constraint_id, f"Error: Failed to build constraint {constraint_type}"
+            
+            # Check constraint
+            proc_name = mp.current_process().name
+            logger.debug(f"Process {proc_name} checking constraint {constraint_id}: {constraint_type}")
+            
+            start_time = time.monotonic()
+            
+            # Execute the constraint check
+            if solver_name == 'z3':
+                result = check_with_z3(constraint)
+            elif solver_name == 'dreal' or 'marabou':
+                result = check_with_dreal(constraint, delta)
+            else:
+                ValueError(f"Unknown solver: {solver_name}")
 
         check_time = time.monotonic() - start_time
         
@@ -190,7 +200,7 @@ def serialize_expression(expr, solver) -> str:
     """
     if solver == 'z3':
         return expr.serialize()
-    else:
+    else: # For dreal and Marabou, just convert to string
         return str(expr)
 
 def create_constraint_data(constraint_id: int,

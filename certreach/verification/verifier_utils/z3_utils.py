@@ -153,11 +153,15 @@ def extract_z3_partials(final_symbolic_expression):
     input_symbols.sort(key=lambda x: int(str(x).split('_')[2]))  # Sort by index
     input_symbols = sympy.Matrix(input_symbols)
 
+    symbol_list = [*input_symbols]
+    for sym in input_symbols:
+        symbol_list.append(sympy.Symbol(f"partial_{sym}"))
+
     # Compute symbolic partial derivatives
     partials = compute_partial_deriv(final_symbolic_expression[0], input_symbols)
 
     # Convert SymPy symbols to Z3 variables
-    z3_variables = {str(sym): z3.Real(str(sym)) for sym in input_symbols}
+    z3_variables = {str(sym): z3.Real(str(sym)) for sym in symbol_list}
 
     # Convert symbolic partial derivatives to Z3 expressions
     z3_partials = {}

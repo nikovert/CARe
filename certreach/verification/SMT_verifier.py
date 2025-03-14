@@ -15,10 +15,9 @@ from certreach.verification.verifier_utils.constraint_builder import (
     function_maps
 )
 
-
 logger = logging.getLogger(__name__)
 
-def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian, compute_boundary, solver, epsilon=0.5, delta = 0.001,
+def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian, compute_boundary, solver_name, epsilon=0.5, delta = 0.001,
                       reach_mode='forward', min_with='none', set_type='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
     """
     Verifies if the HJB equation holds using dReal for a double integrator system.
@@ -35,15 +34,21 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
     
     # Extract state variables and partial derivatives dynamically
     state_vars = []
-    partials = []
-    for i in range(2, len(variables) + 1):
-        state_vars.append(variables[f"x_1_{i}"])
-        partials.append(partials_variables[f"partial_x_1_{i}"])
+    time_vars = []
+    partial_vars = []
+    for key, value in variables.items():
+        if key.startswith("x_1_"):
+            if key.endswith("_1"):
+                time_vars.append(value)
+            else:
+                state_vars.append(value)
+        elif key.startswith("partial_x_1_"):
+            partial_vars.append(value)
 
-    func_map = function_maps[solver]
+    func_map = function_maps[solver_name]
 
     # Use class method for Hamiltonian computation and other setup
-    hamiltonian_value = compute_hamiltonian(state_vars, partials, func_map)
+    hamiltonian_value = compute_hamiltonian(state_vars, partial_vars[1:], func_map)
 
     if set_type == 'tube': 
         hamiltonian_value = func_map['max'](hamiltonian_value, 0)
@@ -54,10 +59,10 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
     boundary_value = compute_boundary(state_vars)
 
     # Serialize expressions
-    hamiltonian_expr = serialize_expression(hamiltonian_value, solver)
-    value_fn_expr = serialize_expression(value_fn, solver)
-    partials_expr = {key: serialize_expression(val, solver) for key, val in partials_variables.items()}
-    boundary_expr = serialize_expression(boundary_value, solver)
+    hamiltonian_expr = serialize_expression(hamiltonian_value, solver_name)
+    value_fn_expr = serialize_expression(value_fn, solver_name)
+    partials_expr = {key: serialize_expression(val, solver_name) for key, val in partials_variables.items()}
+    boundary_expr = serialize_expression(boundary_value, solver_name)
 
     result = None
     timing_info = {}
@@ -89,7 +94,7 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
             async_result = pool.apply_async(
                 process_check_advanced,
                 args=(
-                    solver,
+                    solver_name if constraint_data['constraint_type'] not in ['boundary_1', 'boundary_2'] else 'dreal',
                     constraint_data,
                     hamiltonian_expr,
                     value_fn_expr,
@@ -97,6 +102,7 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
                     partials_expr
                 )
             )
+
             async_results.append(async_result)
         
         try:
@@ -227,7 +233,7 @@ class SMTVerifier:
                 self.delta = 0.001  # Default delta for dReal verification
                 return 'dreal'
             else:
-                return 'z3'
+                return 'marabou'
         else:
             if self.solver_preference == 'dreal':
                 self.delta = 0.001
@@ -327,7 +333,7 @@ class SMTVerifier:
         epsilon: float,
     ) -> Tuple[bool, Optional[torch.Tensor], Dict[str, float]]:
         """
-        Verify a trained model using dReal/Z3.
+        Verify a trained model using dReal/Z3/Marabou.
         
         Args:
             model_state: The model's state dictionary
@@ -351,18 +357,18 @@ class SMTVerifier:
         logger.debug("Symbolic model extracted successfully")
         
         # Select solver
-        solver = self._select_solver(symbolic_model)
-        logger.info(f"Selected {solver} solver for verification")
+        solver_name = self._select_solver(symbolic_model)
+        logger.info(f"Selected {solver_name} solver for verification")
         
         # Time verification setup and execution
         t_verify_start = time.time()
         
-        if solver == 'z3':
+        if solver_name == 'z3':
             result = extract_z3_partials(symbolic_model)
-        elif solver == 'dreal':
+        elif solver_name in ['dreal', 'marabou']:
             result = extract_dreal_partials(symbolic_model)
         else:
-            NotImplementedError(f"Solver {solver} is not yet supported.")
+            NotImplementedError(f"Solver {solver_name} is not yet supported.")
 
         success, counterexample = verify_with_SMT(
             value_fn=result["value_fn"],
@@ -372,7 +378,7 @@ class SMTVerifier:
             compute_boundary=compute_boundary,
             epsilon=epsilon,
             delta=self.delta,
-            solver = solver,
+            solver_name = solver_name,
             reach_mode=system_specifics.get('reach_mode', 'forward'),
             min_with=system_specifics.get('min_with', 'none'),
             set_type=system_specifics.get('set_type', 'set'),

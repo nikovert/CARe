@@ -214,6 +214,7 @@ def train(model: torch.nn.Module,
                 progress_flag = True
                 if curriculum.get_progress() == 1.0 and losses['diff_constraint_hom'].max() < epsilon*0.95:
                     patience += 1
+                    max_lambda = 0.3
                     stopping_flag = patience > 1000  # Stop after minimum of 1000 consistent epochs
                 else:
                     patience = 0
