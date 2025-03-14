@@ -52,7 +52,7 @@
                 "--min_with", "none",
                 "--set_type", "set",
                 "--model_type", "relu_primitive",
-                "--solver", "dreal",
+                "--solver", "marabou",
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -79,7 +79,8 @@
                 "--epsilon", "0.15",
                 "--model_type", "sine",
                 "--solver", "dreal",
-                "--use_polynomial"
+                "--use_polynomial",
+                "--load_model"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,

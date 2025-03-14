@@ -85,7 +85,7 @@ def parse_args():
                   help='Radius around counterexample points for sampling')
     p.add_argument('--max_iterations', type=int, default=50,
                   help='Maximum number of CEGIS iterations')
-    p.add_argument('--solver', type=str, default='auto', choices=['auto', 'dreal', 'z3'],
+    p.add_argument('--solver', type=str, default='auto', choices=['auto', 'dreal', 'z3', 'marabou'],
                   help='SMT solver to use for verification (auto will select based on problem)')
     
     # Add device argument

@@ -94,7 +94,7 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
             async_result = pool.apply_async(
                 process_check_advanced,
                 args=(
-                    solver_name if constraint_data['constraint_type'] not in ['boundary_1', 'boundary_2'] else 'dreal',
+                    solver_name if constraint_data['constraint_type'] not in ['boundary_1', 'boundary_2', 'target_1', 'target_3'] else 'dreal',
                     constraint_data,
                     hamiltonian_expr,
                     value_fn_expr,
