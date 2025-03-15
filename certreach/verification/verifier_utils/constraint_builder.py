@@ -1,5 +1,6 @@
 import logging
 from typing import Dict, List, Any, Tuple, Optional, Callable
+import ast
 import time
 import multiprocessing as mp
 from certreach.verification.verifier_utils.dreal_utils import dreal_function_map, check_with_dreal, parse_dreal_expression
@@ -13,7 +14,6 @@ function_maps = {
 }
 
 logger = logging.getLogger(__name__)
-
 
 def rebuild_constraint(func_map,
                     constraint_type: str, 
@@ -138,11 +138,15 @@ def process_check_advanced(solver_name, constraint_data, hamiltonian_expr, value
             variables[str(var)] = var
         for i, var in enumerate(partial_vars):
             variables[str(var)] = var
+        # Check constraint
+        proc_name = mp.current_process().name
+        logger.debug(f"Process {proc_name} checking constraint {constraint_id}: {constraint_type}")
         
-        if solver_name == 'marabou' and constraint_type not in ['boundary_1', 'boundary_2']:
-            check_with_marabou(constraint_data, 
-                                partials_expr,
-                                hamiltonian_expr)
+        start_time = time.monotonic()
+        if solver_name == 'marabou' and constraint_type not in ['boundary_1', 'boundary_2', 'target_1', 'target_3']:
+            result = check_with_marabou(constraint_data, 
+                               partials_expr,
+                               hamiltonian_expr)
         else:
             # Use rebuild_constraint to create the constraint
             constraint = rebuild_constraint(
@@ -160,12 +164,6 @@ def process_check_advanced(solver_name, constraint_data, hamiltonian_expr, value
             if constraint is None:
                 logger.error(f"Failed to build constraint {constraint_id}")
                 return constraint_id, f"Error: Failed to build constraint {constraint_type}"
-            
-            # Check constraint
-            proc_name = mp.current_process().name
-            logger.debug(f"Process {proc_name} checking constraint {constraint_id}: {constraint_type}")
-            
-            start_time = time.monotonic()
             
             # Execute the constraint check
             if solver_name == 'z3':
@@ -359,22 +357,30 @@ def parse_counterexample(result_str: str) -> Dict[str, Tuple[float, float]]:
     """
     counterexample = {}
     try:
-        # Check if parsing an interval
+        # Check if parsing dict format
         if ':' in result_str:
-            for line in result_str.strip().split('\n'):
-                # Parse each variable and its range
-                if ':' not in line:
-                    continue
+            if '\n' in result_str:
+                for line in result_str.strip().split('\n'):
+                    # Parse each variable and its range
+                    if ':' not in line:
+                        continue
+                        
+                    variable, value_range = line.split(':')
+                    value_range = value_range.strip()
                     
-                variable, value_range = line.split(':')
-                value_range = value_range.strip()
-                
-                if value_range.startswith('[') and value_range.endswith(']'):
-                    # Extract lower and upper bounds
-                    bounds = value_range.strip('[] ').split(',')
-                    if len(bounds) == 2:
-                        lower, upper = map(float, bounds)
-                        counterexample[variable.strip()] = (lower, upper)
+                    if value_range.startswith('[') and value_range.endswith(']'):
+                        # Extract lower and upper bounds
+                        bounds = value_range.strip('[] ').split(',')
+                        if len(bounds) == 2:
+                            lower, upper = map(float, bounds)
+                            counterexample[variable.strip()] = (lower, upper)
+            else:
+                result = ast.literal_eval(result_str)
+                for key, value in result.items():
+                    if isinstance(value, list):
+                        counterexample[key] = tuple(value)
+                    else:
+                        counterexample[key] = (value, value)
         else:
             clean_str = result_str.strip('[]')
             # Extract all floating point numbers

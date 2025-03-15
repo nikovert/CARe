@@ -17,7 +17,7 @@ from certreach.verification.verifier_utils.constraint_builder import (
 
 logger = logging.getLogger(__name__)
 
-def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian, compute_boundary, solver_name, epsilon=0.5, delta = 0.001,
+def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian, compute_boundary, solver_name, epsilon=0.5, delta = 0.01,
                       reach_mode='forward', min_with='none', set_type='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
     """
     Verifies if the HJB equation holds using dReal for a double integrator system.
@@ -206,9 +206,10 @@ class SMTVerifier:
         """
         self.device = device
         self.solver_preference = solver_preference
+        self._solver = None
         self.delta = None
         
-    def _select_solver(self, symbolic_model):
+    def _select_solver(self, symbolic_model, epsilon):
         """
         Select appropriate solver based on model characteristics and user preference.
         
@@ -222,22 +223,22 @@ class SMTVerifier:
         # Auto-select based on model properties
         # Check if model has trigonometric functions (better with dReal)
         has_trig = (str(str(symbolic_model)).find('sin') >= 0) or (str(str(symbolic_model)).find('cos') >= 0)
-        
+        self.delta = 0.01  # Default delta for dReal verification
+
         if self.solver_preference in ['z3', 'marabou'] and has_trig:
             logger.info("Model contains trigonometric functions: Using dReal for verification")
-            self.delta = 0.001
-            return 'dreal'  # Use dReal for models with trigonometric functions
+            self._solver =  'dreal'  # Use dReal for models with trigonometric functions
         elif self.solver_preference == 'auto':
             if has_trig:
                 logger.info("Model contains trigonometric functions: Using dReal for verification")
-                self.delta = 0.001  # Default delta for dReal verification
-                return 'dreal'
+                self._solver =  'dreal'
             else:
-                return 'marabou'
+                # Need to add delta here for constraints that are solved with delta
+                self._solver =  'marabou'
         else:
-            if self.solver_preference == 'dreal':
-                self.delta = 0.001
-            return self.solver_preference
+            self._solver = self.solver_preference
+        
+        return self._solver
 
     def validate_counterexample(
         self,
@@ -296,24 +297,23 @@ class SMTVerifier:
         
         result['details']['pde_residual'] = pde_residual
         
-        if self.delta:
-            delta = self.delta
-            logger.info(f"Using delta={delta} for validation")
+        if self._solver == 'dreal':
+            pde_result_delta = self.delta
         else:
-            delta = 0
+            pde_result_delta = 0.0
 
         # Determine which condition is violated based on epsilon
-        if boundary_diff is not None and boundary_diff > epsilon-delta:
+        if boundary_diff is not None and boundary_diff > epsilon-self.delta:
             result['is_valid_ce'] = True
             result['violation_type'] = 'boundary'
             result['violation_amount'] = boundary_diff
-            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon-delta}")
+            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon-self.delta}")
         
-        elif pde_residual > epsilon-delta:
+        elif pde_residual > epsilon-pde_result_delta:
             result['is_valid_ce'] = True
             result['violation_type'] = 'pde'
             result['violation_amount'] = pde_residual
-            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon-delta}")
+            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon-pde_result_delta}")
         
         else:
             boundary_info = f"Boundary diff: {boundary_diff:.6f}, " if boundary_diff is not None else ""
@@ -357,7 +357,7 @@ class SMTVerifier:
         logger.debug("Symbolic model extracted successfully")
         
         # Select solver
-        solver_name = self._select_solver(symbolic_model)
+        solver_name = self._select_solver(symbolic_model, epsilon)
         logger.info(f"Selected {solver_name} solver for verification")
         
         # Time verification setup and execution

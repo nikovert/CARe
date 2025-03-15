@@ -1,7 +1,8 @@
 import logging
-from typing import Dict, List, Tuple, Optional
-from certreach.verification.verifier_utils.symbolic import compute_partial_deriv
+from typing import Dict, Tuple, Optional
 from maraboupy import MarabouCore
+import multiprocessing as mp
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ class MarabouExpressionParser:
                 output_terms.append(linear_var)
         
         # Create equation connecting output_var to sum of all terms
-        output_eq = MarabouCore.Equation(EquationType = MarabouCore.Equation.EQ)
+        output_eq = MarabouCore.Equation(MarabouCore.Equation.EQ)
         
         # Output variable coefficient is -1
         output_eq.addAddend(-1, output_var)
@@ -115,6 +116,7 @@ class MarabouExpressionParser:
         if '*' in term and "max(" in term.split('*')[1]:
             # Term is in the form "coef*max(...)"
             coef_str, max_expr = term.split('*', 1)
+            coef_str = coef_str.replace(" ", "")
             coef = float(coef_str.strip())
         elif term.strip().startswith("max("):
             # Term is just "max(...)" with implicit coefficient 1
@@ -143,7 +145,7 @@ class MarabouExpressionParser:
             # If coefficient is not 1, we need another variable and equation
             if coef != 1.0:
                 final_var = self.create_auxiliary_variable()
-                eq = MarabouCore.Equation(EquationType = MarabouCore.Equation.EQ)
+                eq = MarabouCore.Equation(MarabouCore.Equation.EQ)
                 eq.addAddend(-1, final_var)
                 eq.addAddend(coef, output_var)
                 eq.setScalar(0)
@@ -163,12 +165,13 @@ class MarabouExpressionParser:
         term_var = self.create_auxiliary_variable()
         
         # Create equation: term_var = linear combination
-        eq = MarabouCore.Equation(EquationType=MarabouCore.EquationType.EQ)
+        eq = MarabouCore.Equation(MarabouCore.EquationType.EQ)
         eq.addAddend(-1, term_var)
         
         # Parse coefficient and variable
         if '*' in term:
             coef_str, var_name = term.split('*', 1)
+            coef_str = coef_str.replace(" ", "")
             coef = float(coef_str.strip())
             var_idx = self.get_variable(var_name.strip())
             eq.addAddend(coef, var_idx)
@@ -187,71 +190,38 @@ class MarabouExpressionParser:
         return term_var
     
     def _parse_linear_expression(self, expr_str):
-        """Parse a linear expression (no Max functions)."""
+        """
+        Parse a linear expression (no Max functions).
+        
+        """
         # Create variable for the result
         result_var = self.create_auxiliary_variable()
         
         # Create equation: result_var = linear combination
-        eq = MarabouCore.Equation(EquationType=MarabouCore.Equation.EQ)
+        eq = MarabouCore.Equation(MarabouCore.Equation.EQ)
         eq.addAddend(-1, result_var)
         
-        # Parse terms in the linear expression
-        remaining = expr_str
+        # Use regex to extract terms properly
+        # Match patterns like: "-0.123", "0.456 * x_1_2", "-7.89 * x_1_3"
+        pattern = r'([-+]?\s*\d*\.?\d+(?:[eE][-+]?\d+)?)(?:\s*\*\s*([a-zA-Z_][a-zA-Z0-9_]*))?'
+        
+        # Find all matches
+        matches = re.findall(pattern, expr_str)
         constant_term = 0
         
-        # Process terms separated by + or -
-        while remaining:
-            match_add = remaining.find('+')
-            match_sub = remaining.find('-')
+        # Process each match
+        for coef_str, var_name in matches:
+            # Remove all whitespace from the coefficient string
+            coef_str = coef_str.replace(" ", "")
+            coeff = float(coef_str)
             
-            # Find the position of the next operator
-            operator_pos = None
-            is_add = True
-            
-            if match_add >= 0 and (match_sub < 0 or match_add < match_sub):
-                operator_pos = match_add
-                is_add = True
-            elif match_sub >= 0:
-                operator_pos = match_sub
-                is_add = False
-            
-            if operator_pos is not None:
-                term = remaining[:operator_pos].strip()
-                remaining = remaining[operator_pos+1:].strip()
+            if var_name:
+                # Term with variable
+                var_idx = self.get_variable(var_name.strip())
+                eq.addAddend(coeff, var_idx)
             else:
-                # Last term
-                term = remaining.strip()
-                remaining = ""
-            
-            # Process the current term
-            if not term:
-                # Handle consecutive operators (like a+-b)
-                if not is_add:
-                    remaining = '-' + remaining
-                continue
-            
-            # If this is a subtraction, negate the coefficient
-            sign = 1 if is_add else -1
-            
-            # Parse the term
-            if '*' in term:
-                # Term has a coefficient
-                coef_str, var_name = term.split('*', 1)
-                try:
-                    coef = float(coef_str.strip()) * sign
-                    var_idx = self.get_variable(var_name.strip())
-                    eq.addAddend(coef, var_idx)
-                except ValueError:
-                    raise ValueError(f"Invalid coefficient: {coef_str}")
-            else:
-                try:
-                    # Try parsing as constant
-                    constant = float(term) * sign
-                    constant_term += constant
-                except ValueError:
-                    # It's a variable with coefficient 1 or -1
-                    var_idx = self.get_variable(term)
-                    eq.addAddend(sign, var_idx)
+                # Constant term
+                constant_term += coeff
         
         # Add constant term to equation
         eq.setScalar(constant_term)
@@ -270,14 +240,11 @@ class MarabouExpressionParser:
             MarabouCore.InputQuery: The input query for Marabou
         """
         query = MarabouCore.InputQuery()
-        
+        query.setNumberOfVariables(self.next_var_idx-1)
+
         # Add all equations
         for eq in self.equations:
             query.addEquation(eq)
-        
-        # Add all ReLU constraints
-        for in_var, out_var in self.relu_pairs:
-            query.addReluConstraint(in_var, out_var)  # Use addReluConstraint instead of addReluPair
         
         # Set variable bounds
         if bounds:
@@ -286,6 +253,10 @@ class MarabouExpressionParser:
                     var_idx = self.variables[var_name]
                     query.setLowerBound(var_idx, lb)
                     query.setUpperBound(var_idx, ub)
+
+        # Add all ReLU constraints
+        for in_var, out_var in self.relu_pairs:
+            MarabouCore.addReluConstraint(query, in_var, out_var)  # Use addReluConstraint instead of addReluPair
         
         return query
 
@@ -305,102 +276,76 @@ def check_with_marabou(
     Returns:
         Tuple of (constraint_id, counterexample if found or None)
     """
-    try:
-        constraint_id = constraint_data['constraint_id']
-        constraint_type = constraint_data['constraint_type']
-        epsilon = constraint_data['epsilon']
-        is_initial_time = constraint_data['is_initial_time']
+    constraint_id = constraint_data['constraint_id']
+    constraint_type = constraint_data['constraint_type']
+    epsilon = constraint_data['epsilon']
+    is_initial_time = constraint_data['is_initial_time']
+    
+    # Create parser to handle expressions with ReLU
+    parser = MarabouExpressionParser()
+    
+    # Setup variable bounds
+    bounds = {}
+    if is_initial_time:
+        bounds["x_1_1"] = (0.0, 0.0)  # Fix time at t=0
+    else:
+        bounds["x_1_1"] = (0.0, 1.0)  # Time variable t
         
-        # Create parser to handle expressions with ReLU
-        parser = MarabouExpressionParser()
+    # Add state variable bounds
+    space_constraints = constraint_data['space_constraints']
+    for i, (lb, ub) in enumerate(space_constraints):
+        bounds[f"x_1_{i+2}"] = (lb, ub)
+    
+    # Parse the value function, partial derivatives, and boundary expressions
+    dv_dt_var = None
+    if f"partial_x_1_1" in partials_expr:
+        dv_dt_var = parser.parse_expression(partials_expr[f"partial_x_1_1"])
+    
+    hamiltonian_var = parser.parse_expression(hamiltonian_expr)
+    
+    if constraint_type in ['boundary_1', 'boundary_2', 'target_1', 'target_3']:
+        # Value function - boundary value > epsilon
+        logger.warning(f"{constraint_type} constraint not recommended for Marabou")
+    elif constraint_type == 'derivative_1':
+        # dV/dt + H(x, ∇V) < -epsilon
+        constraint_eq = MarabouCore.Equation(MarabouCore.Equation.LE)
+        constraint_eq.addAddend(1, dv_dt_var)
+        constraint_eq.addAddend(1, hamiltonian_var)
+        constraint_eq.setScalar(-epsilon)
         
-        # Setup variable bounds
-        bounds = {}
-        if is_initial_time:
-            bounds["x_1_1"] = (0.0, 0.0)  # Fix time at t=0
-        else:
-            bounds["x_1_1"] = (0.0, 1.0)  # Time variable t
-            
-        # Add state variable bounds
-        space_constraints = constraint_data['space_constraints']
-        for i, (lb, ub) in enumerate(space_constraints):
-            bounds[f"x_1_{i+2}"] = (lb, ub)
+    elif constraint_type == 'derivative_2':
+        # dV/dt + H(x, ∇V) > epsilon
+        constraint_eq = MarabouCore.Equation(MarabouCore.Equation.GE)
+        constraint_eq.addAddend(1, dv_dt_var)
+        constraint_eq.addAddend(1, hamiltonian_var)
+        constraint_eq.setScalar(epsilon)
         
-        # Parse the value function, partial derivatives, and boundary expressions
-        dv_dt_var = None
-        if f"partial_x_1_1" in partials_expr:
-            dv_dt_var = parser.parse_expression(partials_expr[f"partial_x_1_1"])
+    elif constraint_type == 'target_2':
+        # dV/dt + H(x, ∇V) > epsilon
+        constraint_eq = MarabouCore.Equation(MarabouCore.Equation.GE)
+        constraint_eq.addAddend(1, dv_dt_var)
+        constraint_eq.addAddend(1, hamiltonian_var)
+        constraint_eq.setScalar(epsilon)
         
-        hamiltonian_var = parser.parse_expression(hamiltonian_expr)
-        
-        # Create the target constraint based on constraint type
-        constraint_eq = MarabouCore.Equation()
-        
-        if constraint_type == 'boundary_1':
-            # Value function - boundary value > epsilon
-            logger.warning("Boundary_2 constraint not recommended for Marabou")
-            
-        elif constraint_type == 'boundary_2':
-            # Value function - boundary value < -epsilon
-            logger.warning("Boundary_2 constraint not recommended for Marabou")
-            
-        elif constraint_type == 'derivative_1':
-            # dV/dt + H(x, ∇V) < -epsilon
-            constraint_eq.EquationType =MarabouCore.Equation.LE
-            constraint_eq.addAddend(1, dv_dt_var)
-            constraint_eq.addAddend(1, hamiltonian_var)
-            constraint_eq.setScalar(-epsilon)
-            
-        elif constraint_type == 'derivative_2':
-            # dV/dt + H(x, ∇V) > epsilon
-            constraint_eq.EquationType =MarabouCore.Equation.GE
-            constraint_eq.addAddend(1, dv_dt_var)
-            constraint_eq.addAddend(1, hamiltonian_var)
-            constraint_eq.setScalar(epsilon)
-            
-        elif constraint_type == 'target_1':
-            # Need two constraints: dV/dt + H < -epsilon AND V - g < -epsilon
-            logger.warning("Target_1 constraint not recommended for Marabou")
+    query = parser.create_marabou_query(bounds)
+    query.addEquation(constraint_eq)
+    
+    options = MarabouCore.Options()
+    options._verbosity = 0
+    
+    # Check constraint
+    proc_name = mp.current_process().name
+    logger.info(f"Process {proc_name} checking constraint {constraint_id}: {constraint_type}")
 
-            
-        elif constraint_type == 'target_2':
-            # dV/dt + H(x, ∇V) > epsilon
-            constraint_eq.EquationType = MarabouCore.Equation.GE
-            if dv_dt_var is not None:
-                constraint_eq.addAddend(1, dv_dt_var)
-            constraint_eq.addAddend(1, hamiltonian_var)
-            constraint_eq.setScalar(epsilon)
-            
-        elif constraint_type == 'target_3':
-            # V - g(x) > epsilon
-            logger.warning("Target_3 constraint not recommended for Marabou")
-            
-        query = parser.create_marabou_query(bounds)
-        query.addEquation(constraint_eq)
+    result = MarabouCore.solve(query, options)
+    
+    if result[0] == 'unsat':
+        return None 
+    else:
+        # Found a counterexample
+        counterexample = {}
+        for var_name, var_idx in parser.variables.items():
+            if var_name.startswith('x_1_'):
+                counterexample[var_name] = result[1][var_idx]
         
-        options = MarabouCore.Options()
-        options._timeoutInSeconds = 300  # 5 minutes
-        options._verbosity = 0
-        
-        logger.info(f"Checking constraint {constraint_id} ({constraint_type}) with Marabou")
-        result = MarabouCore.solve(query, options)
-        
-        if result[1].hasTimedOut():
-            logger.warning(f"Marabou verification for constraint {constraint_id} timed out")
-            return constraint_id, None
-        
-        if len(result[0]) > 0:
-            # Found a counterexample
-            counterexample = {}
-            for var_name, var_idx in parser.variables.items():
-                if var_name.startswith('x_1_'):
-                    counterexample[var_name] = result[0][var_idx]
-            
-            return constraint_id, counterexample
-        
-        return constraint_id, None
-        
-    except Exception as e:
-        logger.error(f"Error in Marabou constraint check: {e}")
-        return constraint_data.get('constraint_id', -1), f"Error: {str(e)}"
-
+        return counterexample
