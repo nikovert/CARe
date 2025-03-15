@@ -1,7 +1,6 @@
 import logging
 from typing import Dict, Tuple, Optional
 from maraboupy import MarabouCore
-import multiprocessing as mp
 import re
 
 logger = logging.getLogger(__name__)
@@ -9,6 +8,8 @@ logger = logging.getLogger(__name__)
 class MarabouExpressionParser:
     """Parse symbolic expressions into Marabou input queries with ReLU support."""
     
+    large_constant = 1e6
+
     def __init__(self):
         """Initialize the expression parser."""
         self.variables = {}  # Maps var names to Marabou variable indices
@@ -165,7 +166,7 @@ class MarabouExpressionParser:
         term_var = self.create_auxiliary_variable()
         
         # Create equation: term_var = linear combination
-        eq = MarabouCore.Equation(MarabouCore.EquationType.EQ)
+        eq = MarabouCore.Equation(MarabouCore.Equation.EQ)
         eq.addAddend(-1, term_var)
         
         # Parse coefficient and variable
@@ -246,6 +247,10 @@ class MarabouExpressionParser:
         for eq in self.equations:
             query.addEquation(eq)
         
+        for var_idx in range(self.next_var_idx-1):
+            query.setLowerBound(var_idx, -self.large_constant)
+            query.setUpperBound(var_idx, self.large_constant)
+
         # Set variable bounds
         if bounds:
             for var_name, (lb, ub) in bounds.items():
@@ -334,9 +339,6 @@ def check_with_marabou(
     options._verbosity = 0
     
     # Check constraint
-    proc_name = mp.current_process().name
-    logger.info(f"Process {proc_name} checking constraint {constraint_id}: {constraint_type}")
-
     result = MarabouCore.solve(query, options)
     
     if result[0] == 'unsat':
