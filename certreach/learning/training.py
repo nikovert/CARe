@@ -137,7 +137,7 @@ def train(model: torch.nn.Module,
     patience = 0
     max_lambda = 0.1
 
-    with tqdm(total=max_epochs) as pbar:
+    with tqdm(total=max_epochs, dynamic_ncols=True) as pbar:
         train_losses = []
         stopping_flag = False
         progress_flag = False # Flag to indicate if curriculum should procude forward
