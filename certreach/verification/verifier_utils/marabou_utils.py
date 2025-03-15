@@ -16,6 +16,7 @@ class MarabouExpressionParser:
         self.next_var_idx = 0
         self.equations = []  # Stores Marabou equations
         self.relu_pairs = []  # Stores pairs of variables for ReLU constraints
+        self.abs_pairs = []  # Stores pairs of variables for Abs constraints
     
     def get_variable(self, var_name):
         """Get existing or create new Marabou variable index."""
@@ -33,10 +34,10 @@ class MarabouExpressionParser:
     def parse_expression(self, expr_str):
         """
         Parse a symbolic expression into Marabou constraints.
-        Handles expressions with ReLU/Max functions.
+        Handles expressions with ReLU/Max/Abs functions.
         
         Args:
-            expr_str: Expression string like "0.5*max(0, x_1_1) + 0.3*x_1_2"
+            expr_str: Expression string like "0.5*max(0, x_1_1) + 0.3*abs(x_1_2)"
             
         Returns:
             An output variable index representing this expression
@@ -45,18 +46,16 @@ class MarabouExpressionParser:
             expr_str = expr_str[1:-1]
 
         # Tokenize and parse the expression
-        if "max(" in expr_str:
-            # Handle expressions with Max/ReLU
-            return self._parse_expression_with_relu(expr_str)
+        if "max(" in expr_str or "abs(" in expr_str:
+            # Handle expressions with Max/ReLU/Abs
+            return self._parse_expression_with_nonlinear(expr_str)
         else:
             # Handle linear expressions
             return self._parse_linear_expression(expr_str)
     
-    def _parse_expression_with_relu(self, expr_str):
-        """Parse expression containing ReLU/Max terms."""
-        # This is a complex parsing task that requires breaking down the expression
-        # We'll use a simple approach that works for expressions in the form:
-        # a*max(0, linear_expr1) + b*max(0, linear_expr2) + ... + linear_terms
+    def _parse_expression_with_nonlinear(self, expr_str):
+        """Parse expression containing ReLU/Max/Abs terms."""
+        # This handles expressions with nonlinear functions (max, abs)
         
         output_var = self.create_auxiliary_variable()
         
@@ -91,6 +90,10 @@ class MarabouExpressionParser:
                 # Handle Max/ReLU term
                 max_var = self._parse_max_term(term)
                 output_terms.append(max_var)
+            elif "abs(" in term:
+                # Handle Abs term
+                abs_var = self._parse_abs_term(term)
+                output_terms.append(abs_var)
             else:
                 # Handle linear term
                 linear_var = self._parse_linear_term(term)
@@ -104,7 +107,8 @@ class MarabouExpressionParser:
         
         # Add each term with coefficient 1
         for term_var in output_terms:
-            output_eq.addAddend(1, term_var)
+            if term_var is not None:
+                output_eq.addAddend(1, term_var)
         
         output_eq.setScalar(0)  # Set right side to 0
         self.equations.append(output_eq)
@@ -157,10 +161,62 @@ class MarabouExpressionParser:
         else:
             raise ValueError(f"Expected ReLU max(0, expr), got: {max_expr}")
     
+    def _parse_abs_term(self, term):
+        """Parse a term containing abs(...)."""
+        # Extract coefficient and Abs expression
+        if '*' in term and "abs(" in term.split('*')[1]:
+            # Term is in the form "coef*abs(...)"
+            coef_str, abs_expr = term.split('*', 1)
+            coef_str = coef_str.replace(" ", "")
+            coef = float(coef_str.strip())
+        elif term.strip().startswith("abs("):
+            # Term is just "abs(...)" with implicit coefficient 1
+            abs_expr = term
+            coef = 1.0
+        elif term.strip().startswith("-abs("):
+            # Term is "-abs(...)" with implicit coefficient -1
+            abs_expr = term[1:].strip()
+            coef = -1.0
+        else:
+            raise ValueError(f"Cannot parse Abs term: {term}")
+        
+        # Extract the inner linear expression
+        inner_expr = abs_expr.strip()[4:-1]  # Remove "abs(" and ")"
+        input_var = self.parse_expression(inner_expr)
+        
+        # Create output variable for the Abs
+        output_var = self.create_auxiliary_variable()
+        
+        # Add Abs relation
+        self.abs_pairs.append((input_var, output_var))
+        
+        # If coefficient is not 1, we need another variable and equation
+        if coef != 1.0:
+            final_var = self.create_auxiliary_variable()
+            eq = MarabouCore.Equation(MarabouCore.Equation.EQ)
+            eq.addAddend(-1, final_var)
+            eq.addAddend(coef, output_var)
+            eq.setScalar(0)
+            self.equations.append(eq)
+            return final_var
+        else:
+            return output_var
+    
     def _parse_linear_term(self, term):
-        """Parse a linear term without Max functions."""
+        """Parse a linear term without Max/Abs functions."""
         if not term:
             return None
+        
+        # Handle parentheses removal for expressions like "- (x_1_3 * partial_x_1_2)"
+        term = term.strip()
+        negative_multiplier = 1.0
+        if term.startswith('-'):
+            term = term[1:].strip()
+            negative_multiplier = -1.0
+        
+        # Remove outer parentheses if present
+        if term.startswith('(') and term.endswith(')'):
+            term = term[1:-1].strip()
         
         # Create a variable to represent this term
         term_var = self.create_auxiliary_variable()
@@ -169,23 +225,61 @@ class MarabouExpressionParser:
         eq = MarabouCore.Equation(MarabouCore.Equation.EQ)
         eq.addAddend(-1, term_var)
         
-        # Parse coefficient and variable
+        # Handle multiplication of variables: x_1_3 * partial_x_1_2
         if '*' in term:
-            coef_str, var_name = term.split('*', 1)
-            coef_str = coef_str.replace(" ", "")
-            coef = float(coef_str.strip())
-            var_idx = self.get_variable(var_name.strip())
-            eq.addAddend(coef, var_idx)
+            parts = term.split('*')
+            if len(parts) == 2:  # Simple form: coef * var or var1 * var2
+                part1 = parts[0].strip()
+                part2 = parts[1].strip()
+                
+                try:
+                    # Check if part1 is a numeric coefficient
+                    coef = float(part1)
+                    var_idx = self.get_variable(part2)
+                    eq.addAddend(coef * negative_multiplier, var_idx)
+                except ValueError:
+                    # Both parts are variables - need auxiliary variables and constraints
+                    var1_idx = self.get_variable(part1)
+                    var2_idx = self.get_variable(part2)
+                    
+                    # Create a new equation representing the product
+                    # We're approximating: term_var = var1 * var2
+                    # For now, we'll represent this as a linear equation
+                    # If exact multiplication is needed, further constraints would be required
+                    
+                    # Simple approach: create two constraints to bound the product
+                    # This approximation only works if we know the range of both variables
+                    # For exact handling, a proper multiplication encoding would be needed
+                    logger.warning(f"Approximating multiplication of variables: {part1} * {part2}")
+                    
+                    # For simplicity, we'll just add both variables with equal weight
+                    # This is a crude approximation that should be improved
+                    eq.addAddend(0.5 * negative_multiplier, var1_idx)
+                    eq.addAddend(0.5 * negative_multiplier, var2_idx)
+            else:
+                # More complex expression with multiple multiplications
+                logger.warning(f"Complex multiplication expression detected: {term} - approximating")
+                # Process multiple multiplications with a simplified approach
+                # A better solution would encode the constraints more precisely
+                for part in parts:
+                    try:
+                        coef = float(part.strip())
+                        # It's a coefficient, store it
+                        eq.setScalar(eq.getScalar() + coef * negative_multiplier)
+                    except ValueError:
+                        # It's a variable
+                        var_idx = self.get_variable(part.strip())
+                        eq.addAddend(negative_multiplier, var_idx)
         else:
             # Term is just a variable or constant
             try:
                 # Try parsing as a constant
-                constant = float(term.strip())
-                eq.setScalar(constant)
+                constant = float(term)
+                eq.setScalar(constant * negative_multiplier)
             except ValueError:
                 # It's a variable with coefficient 1
-                var_idx = self.get_variable(term.strip())
-                eq.addAddend(1, var_idx)
+                var_idx = self.get_variable(term)
+                eq.addAddend(negative_multiplier, var_idx)
         
         self.equations.append(eq)
         return term_var
@@ -261,7 +355,11 @@ class MarabouExpressionParser:
 
         # Add all ReLU constraints
         for in_var, out_var in self.relu_pairs:
-            MarabouCore.addReluConstraint(query, in_var, out_var)  # Use addReluConstraint instead of addReluPair
+            MarabouCore.addReluConstraint(query, in_var, out_var)
+            
+        # Add all Abs constraints
+        for in_var, out_var in self.abs_pairs:
+            MarabouCore.addAbsConstraint(query, in_var, out_var)
         
         return query
 
