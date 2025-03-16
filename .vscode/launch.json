@@ -43,7 +43,7 @@
                 "--run_mode", "cegis",
                 "--logging_root", "./logs",
                 "--num_epochs", "10",
-                "--num_nl", "2",
+                "--num_nl", "16",
                 "--num_hl", "0",
                 "--max_iterations", "3",
                 "--batch_size", "256",
@@ -52,7 +52,7 @@
                 "--min_with", "none",
                 "--set_type", "set",
                 "--model_type", "relu_primitive",
-                "--solver", "marabou",
+                "--solver", "dreal",
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -73,10 +73,10 @@
                 "--reach_aim", "reach",
                 "--min_with", "none",
                 "--set_type", "set",
-                "--num_nl", "48",
+                "--num_nl", "16",
                 "--num_hl", "0",
-                "--batch_size", "25600",
-                "--epsilon", "0.15",
+                "--batch_size", "51200",
+                "--epsilon", "0.25",
                 "--model_type", "sine",
                 "--solver", "dreal",
                 "--use_polynomial",
@@ -87,7 +87,8 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }
-        },{
+        },
+        {
             "name": "CEGIS Double Integrator - ReLUPrimitive",
             "type": "debugpy",
             "request": "launch",
@@ -100,10 +101,10 @@
                 "--reach_aim", "reach",
                 "--min_with", "none",
                 "--set_type", "set",
-                "--num_nl", "128",
+                "--num_nl", "64",
                 "--num_hl", "0",
                 "--batch_size", "25600",
-                "--epsilon", "0.1",
+                "--epsilon", "0.2",
                 "--model_type", "relu_primitive",
                 "--solver", "dreal",
                 "--load_model"
