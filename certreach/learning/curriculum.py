@@ -21,7 +21,7 @@ class Curriculum:
         self.time_min = time_min
         self.time_max = time_max
         self.current_step = 0
-        self.is_pretraining = True
+        self.is_pretraining = True if rollout else False
     
     def __len__(self):
         return self.total_steps

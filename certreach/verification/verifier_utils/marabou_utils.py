@@ -242,34 +242,10 @@ class MarabouExpressionParser:
                     var1_idx = self.get_variable(part1)
                     var2_idx = self.get_variable(part2)
                     
-                    # Create a new equation representing the product
-                    # We're approximating: term_var = var1 * var2
-                    # For now, we'll represent this as a linear equation
-                    # If exact multiplication is needed, further constraints would be required
-                    
-                    # Simple approach: create two constraints to bound the product
-                    # This approximation only works if we know the range of both variables
-                    # For exact handling, a proper multiplication encoding would be needed
-                    logger.warning(f"Approximating multiplication of variables: {part1} * {part2}")
-                    
-                    # For simplicity, we'll just add both variables with equal weight
-                    # This is a crude approximation that should be improved
-                    eq.addAddend(0.5 * negative_multiplier, var1_idx)
-                    eq.addAddend(0.5 * negative_multiplier, var2_idx)
+                    ValueError(f"Bilinearity detected: {term}")
             else:
                 # More complex expression with multiple multiplications
-                logger.warning(f"Complex multiplication expression detected: {term} - approximating")
-                # Process multiple multiplications with a simplified approach
-                # A better solution would encode the constraints more precisely
-                for part in parts:
-                    try:
-                        coef = float(part.strip())
-                        # It's a coefficient, store it
-                        eq.setScalar(eq.getScalar() + coef * negative_multiplier)
-                    except ValueError:
-                        # It's a variable
-                        var_idx = self.get_variable(part.strip())
-                        eq.addAddend(negative_multiplier, var_idx)
+                ValueError(f"Complex multiplication expression detected: {term} - approximating")
         else:
             # Term is just a variable or constant
             try:
