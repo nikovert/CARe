@@ -12,7 +12,8 @@ from certreach.verification.verifier_utils.constraint_builder import (
     process_check_advanced,
     serialize_expression,
     parse_counterexample as parse_ce,
-    function_maps
+    function_maps,
+    create_constraint_data
 )
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,11 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
     func_map = function_maps[solver_name]
 
     # Use class method for Hamiltonian computation and other setup
-    hamiltonian_value = compute_hamiltonian(state_vars, partial_vars[1:], func_map)
+    use_partial_expression = True
+    if use_partial_expression:
+        hamiltonian_value = compute_hamiltonian(state_vars, [value for key, value in partials_variables.items() if not key.endswith("_1")], func_map)
+    else:
+        hamiltonian_value = compute_hamiltonian(state_vars, partial_vars[1:], func_map)
 
     if set_type == 'tube': 
         hamiltonian_value = func_map['max'](hamiltonian_value, 0)
@@ -160,7 +165,16 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
         logger.info("Parallel constraint checks completed.")
     
     elif execution_mode == "sequential":
-        NotImplementedError("Sequential execution mode is not yet implemented.")
+        constraint_data = create_constraint_data(1, 'derivative_boundary', False, len(state_vars), epsilon, delta, 
+                                      reach_mode, set_type, (0.0, 1.0))
+        result = process_check_advanced(
+                    solver_name,
+                    constraint_data,
+                    hamiltonian_expr,
+                    value_fn_expr,
+                    boundary_expr,
+                    partials_expr
+                )
     else:
         logger.error(f"Unknown execution_mode: {execution_mode}.")
 
@@ -183,7 +197,7 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
         }
     
     # Optionally save result to file
-    result_file = f"{save_directory}/dreal_result.json"
+    result_file = f"{save_directory}/result.json"
     with open(result_file, "w") as f:
         json.dump(verification_result, f, indent=4)
     logger.debug(f"Saved result to {result_file}")
@@ -383,7 +397,6 @@ class SMTVerifier:
             min_with=system_specifics.get('min_with', 'none'),
             set_type=system_specifics.get('set_type', 'set'),
             save_directory=system_specifics['root_path'],
-            execution_mode="parallel",  # Use sequential for better timing info
             additional_constraints=system_specifics.get('additional_constraints', None)
         )
     

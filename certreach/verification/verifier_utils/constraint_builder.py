@@ -67,7 +67,11 @@ def rebuild_constraint(func_map,
     hamiltonian_value = parse(hamiltonian_expr)
     
     # Add partial constraints
-    partial_constraints = [func_map['and'](variables[key] == parse(expr)) for key, expr in partials_expr.items()]
+    if 'partial' in hamiltonian_expr:
+        partial_constraints = [func_map['and'](variables[key] == parse(expr)) for key, expr in partials_expr.items()]
+    else:
+        partial_constraints = []
+        dv_dt = parse(partials_expr['partial_x_1_1'])
     
     # Define state constraints
     if is_initial_time:
@@ -78,7 +82,17 @@ def rebuild_constraint(func_map,
     space_constraints = [func_map['and'](var >= -1, var <= 1) for var in state_vars]
     
     # Build the specified constraint
-    if constraint_type == 'boundary_1':
+    if constraint_type == 'derivative_boundary':
+        derivative_constraint = func_map['abs'](dv_dt + hamiltonian_value) > epsilon
+        boundary_constraint = func_map['and'](func_map['abs'](value_fn - boundary_value) > epsilon, (t == 0))
+        return func_map['and'](time_constraint, *space_constraints, func_map['or'](derivative_constraint,boundary_constraint) , *partial_constraints)
+    elif constraint_type == 'boundary':
+        return func_map['and'](time_constraint, *space_constraints, func_map['abs'](value_fn - boundary_value) > epsilon)
+    elif constraint_type == 'derivative':
+        derivative_constraint = func_map['abs'](dv_dt + hamiltonian_value) > epsilon
+        return func_map['and'](time_constraint, *space_constraints, derivative_constraint, *partial_constraints)
+    # Handle split cases
+    elif constraint_type == 'boundary_1':
         return func_map['and'](time_constraint, *space_constraints, value_fn - boundary_value > epsilon)
     elif constraint_type == 'boundary_2':
         return func_map['and'](time_constraint, *space_constraints, value_fn - boundary_value < -epsilon)
@@ -244,7 +258,7 @@ def prepare_constraint_data_batch(state_dim: int,
                                 min_with: str = 'none',
                                 reach_mode: str = 'forward',
                                 set_type: str = 'set',
-                                time_subdivisions: int = 1) -> List[Dict]:
+                                time_subdivisions: int = 4) -> List[Dict]:
     """
     Prepare a batch of constraint data objects for parallel checking.
     Non-initial time constraints are divided into multiple constraints over subintervals.
