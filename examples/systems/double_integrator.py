@@ -30,9 +30,6 @@ def double_integrator_boundary(states, radius=sqrt(0.25)):
     else:
         # Symbolic computation - unpack states
         # States length can vary based on the system dimension
-        if not states:
-            return 0
-            
         sum_squares = sum(s*s for s in states)
         return sum_squares - radius**2
 
