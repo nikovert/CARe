@@ -258,7 +258,7 @@ def prepare_constraint_data_batch(state_dim: int,
                                 min_with: str = 'none',
                                 reach_mode: str = 'forward',
                                 set_type: str = 'set',
-                                time_subdivisions: int = 4) -> List[Dict]:
+                                time_subdivisions: int = 1) -> List[Dict]:
     """
     Prepare a batch of constraint data objects for parallel checking.
     Non-initial time constraints are divided into multiple constraints over subintervals.
