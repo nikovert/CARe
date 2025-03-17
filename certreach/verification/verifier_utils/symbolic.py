@@ -15,20 +15,17 @@ def relu_primitive_transform(x: sympy.Basic) -> sympy.Basic:
     """Helper function for ReLU primitive transformation."""
     return sympy.Max(0, x)**2
 
-def power_transform(x: sympy.Symbol, power: int, is_time: bool = False) -> sympy.Symbol:
+def power_transform(x: sympy.Symbol, power: int) -> sympy.Symbol:
     """Helper function for polynomial transformation."""
-    if is_time:  # Time component stays linear
-        return x
     return x**power
 
 class SymbolicPolynomialTransform:
     """A picklable class for polynomial transformations."""
-    def __init__(self, power: int, is_time: bool = False):
+    def __init__(self, power: int):
         self.power = power
-        self.is_time = is_time
     
     def __call__(self, x: sympy.Symbol) -> sympy.Symbol:
-        return power_transform(x, self.power, self.is_time)
+        return power_transform(x, self.power)
 
 def get_symbolic_layer_output_generalized(state_dict: Dict[str, torch.Tensor], layer_number: int, config: Dict[str, Any]) -> sympy.Matrix:
     """
@@ -50,7 +47,7 @@ def get_symbolic_layer_output_generalized(state_dict: Dict[str, torch.Tensor], l
         # For polynomial layer, get input features from the next layer's weight
         for name, param in state_dict.items():
             if f'net.1.0.weight' in name:  # Look at the next layer after polynomial
-                in_features = 1 + (param.shape[1]-1) // config.get('poly_degree', 2)  # +1 for time
+                in_features = (param.shape[1]) // config.get('poly_degree', 2)
                 break
     else:
         # Normal layer feature detection
@@ -70,22 +67,17 @@ def get_symbolic_layer_output_generalized(state_dict: Dict[str, torch.Tensor], l
 
     # Process layer using state dict values
     if config.get('use_polynomial', False) and layer_number == 1:  # Polynomial layer
-        # Split time and state components
-            
-        time = current_output[0]  # First component is time
-        
-        # Handle case where there are no state variables
-        states = sympy.Matrix(current_output[1:])  # Convert states slice to Matrix
-        
-        poly_terms = [sympy.Matrix([time])]  # Time stays linear
+        # Apply polynomial transformation to input features
+        inputs = sympy.Matrix(current_output)
+        poly_terms = []
         
         # Apply polynomial transformation only to states
         for i in range(1, config.get('poly_degree', 2) + 1):
             if i == 1:
-                poly_terms.append(states)  # Linear terms for states
+                poly_terms.append(inputs)  # Linear terms for states
             else:
-                transformer = SymbolicPolynomialTransform(i, is_time=False)
-                poly_terms.append(states.applyfunc(transformer))
+                transformer = SymbolicPolynomialTransform(i)
+                poly_terms.append(inputs.applyfunc(transformer))
                 
         current_output = sympy.Matrix.vstack(*poly_terms)
     

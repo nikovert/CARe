@@ -1,5 +1,4 @@
 import torch
-from collections import OrderedDict
 import math
 from pathlib import Path
 from dataclasses import dataclass, fields
@@ -58,21 +57,6 @@ class NetworkConfig:
             "use_batch_norm": tune.choice([True, False])
         }
 
-class BatchLinear(torch.nn.Linear):
-    '''A linear layer'''
-    __doc__ = torch.nn.Linear.__doc__
-
-    def forward(self, input, params=None):
-        if params is None:
-            params = OrderedDict(self.named_parameters())
-
-        bias = params.get('bias', None)
-        weight = params['weight']
-
-        output = input.matmul(weight.permute(*[i for i in range(len(weight.shape) - 2)], -1, -2))
-        output += bias.unsqueeze(-2)
-        return output
-
 class Sine(torch.nn.Module):
     def __init__(self, frequency=30.0):
         super().__init__()
@@ -124,20 +108,16 @@ class PolynomialFunction(torch.autograd.Function):
         ctx.degree = degree
         ctx.save_for_backward(input)
         
-        # Split input into time and states
-        time = input[..., :1]  # Keep time component
-        states = input[..., 1:]  # State components
-        
         # Time remains linear
-        results = [time]
+        results = []
         
         # Compute polynomial terms for states [x, x^2, ..., x^degree]
-        current_power = states
+        current_power = input
         for i in range(1, degree + 1):
             if i == 1:
                 results.append(current_power)  # Linear terms for states
             else:
-                current_power = current_power * states  # Compute higher order terms
+                current_power = current_power * input  # Compute higher order terms
                 results.append(current_power)  # Higher order terms only for states
                 
         return torch.cat(results, dim=-1)
@@ -150,29 +130,30 @@ class PolynomialFunction(torch.autograd.Function):
         input, = ctx.saved_tensors
         degree = ctx.degree
         
-        # Calculate output feature size for states
-        state_features = input.shape[-1] - 1  # Subtract time component
-        state_terms = state_features * degree
-        time_terms = 1  # Time stays linear
-        
-        # Split grad_output into time and state chunks
-        grad_time = grad_output[..., :time_terms]
-        grad_states = grad_output[..., time_terms:]
-        
-        # Initialize gradient tensors
+        # Initialize gradient tensor with zeros
         grad_input = torch.zeros_like(input)
         
-        # Time gradient (linear)
-        grad_input[..., 0:1] = grad_time
+        # Calculate the feature size of each polynomial degree
+        feature_size = input.shape[-1]
         
-        # State gradients
-        state_chunks = grad_states.chunk(degree, dim=-1)
-        for i, grad in enumerate(state_chunks):
-            power = i + 1  # polynomial term degree (1-based)
-            if power == 1:
-                grad_input[..., 1:] += grad
+        # Track the position in grad_output
+        pos = 0
+        
+        # Process each polynomial degree
+        for d in range(1, degree + 1):
+            # Get the gradient for this degree's features
+            grad_d = grad_output[..., pos:pos + feature_size]
+            
+            # Update position for next iteration
+            pos += feature_size
+            
+            # Calculate gradient based on the power rule
+            if d == 1:
+                # For linear terms: gradient is 1 * grad_output
+                grad_input += grad_d
             else:
-                grad_input[..., 1:] += power * (input[..., 1:] ** (power - 1)) * grad
+                # For higher degree terms: gradient is d * x^(d-1) * grad_output
+                grad_input += d * (input ** (d - 1)) * grad_d
             
         return grad_input, None  # None for degree parameter
 
@@ -193,8 +174,7 @@ class PolynomialLayer(torch.nn.Module):
         self.degree = degree
         
         # Calculate expected output features:
-        # 1 (time stays linear) + (in_features-1)*degree (polynomial terms for states)
-        expected_out_features = 1 + (in_features - 1) * degree
+        expected_out_features = in_features* degree
         if out_features != expected_out_features:
             raise ValueError(f"Expected output features: {expected_out_features}, got {out_features}")
         
@@ -308,7 +288,7 @@ class SingleBVPNet(torch.nn.Module):
             # Optional polynomial layer
             if config.use_polynomial:
                 # Calculate correct output features for polynomial layer
-                poly_out_features = 1 + (current_dim - 1) * config.poly_degree  # 1 for time + state features * degree
+                poly_out_features = current_dim * config.poly_degree
                 layers.append(PolynomialLayer(
                     in_features=current_dim,
                     out_features=poly_out_features,
@@ -350,7 +330,7 @@ class SingleBVPNet(torch.nn.Module):
             if first_layer_init is not None:
                 # Find first linear layer and initialize it
                 for module in self.net.modules():
-                    if isinstance(module, BatchLinear):
+                    if isinstance(module, torch.nn.Linear):  # Changed from BatchLinear to torch.nn.Linear
                         initialize_weights(module, first_layer_init)
                         break
             
@@ -364,8 +344,8 @@ class SingleBVPNet(torch.nn.Module):
         """Create a block of layers including optional BatchNorm and Dropout."""
         layers = []
 
-        # Linear layer
-        layers.append(BatchLinear(in_features, out_features))
+        # Linear layer - use nn.Linear instead of BatchLinear
+        layers.append(torch.nn.Linear(in_features, out_features))
 
         # Optional BatchNorm (not on output layer)
         if self.config.use_batch_norm and not is_output:
@@ -620,9 +600,8 @@ class SingleBVPNet(torch.nn.Module):
         }
 
     def forward(self, model_input, params=None):
-        if params is None:
-            params = OrderedDict(self.named_parameters())
-            
+        # Remove the params parameter as it's not needed when using standard nn.Linear
+        
         # If pruned, ensure weights remain pruned
         if self._is_pruned:
             with torch.no_grad():
