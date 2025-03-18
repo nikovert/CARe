@@ -70,6 +70,7 @@ class CEGISLoop:
         self.min_epsilon = args.min_epsilon
         self.pruning_percentage = getattr(args, 'pruning_percentage', 0.10)  # Default threshold if not specified
         self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
+        self.epsilon_ratio = 0.05
         
         # Initialize verifier - use the specified solver preference if available
         solver_preference = getattr(args, 'solver', 'auto')
@@ -122,7 +123,8 @@ class CEGISLoop:
                 validation_fn=self.example.validate,
                 device=self.device,
                 is_finetuning=False,  # Initial training is not fine-tuning
-                epsilon=self.current_epsilon  # Pass current epsilon value
+                epsilon_bndry=self.current_epsilon*self.epsilon_ratio,
+                epsilon_diff=self.current_epsilon*(1-self.epsilon_ratio)
             )
             self.last_training_time = time.time() - train_start
             
@@ -148,7 +150,8 @@ class CEGISLoop:
                     device=self.device,
                     is_finetuning=True,  # Retraining pruned model is fine-tuning
                     momentum=0.9,  # Add momentum for fine-tuning
-                    epsilon=self.current_epsilon  # Pass current epsilon value
+                    epsilon_bndry=self.current_epsilon*self.epsilon_ratio,
+                    epsilon_diff=self.current_epsilon*(1-self.epsilon_ratio)
                 )
                 self.last_training_time += time.time() - train_start
         else:
@@ -169,7 +172,8 @@ class CEGISLoop:
                 device=self.device,
                 is_finetuning=True,  # Retraining pruned model is fine-tuning
                 momentum=0.9,  # Add momentum for fine-tuning
-                epsilon=self.current_epsilon  # Pass current epsilon value
+                epsilon_bndry=self.current_epsilon*self.epsilon_ratio,
+                epsilon_diff=self.current_epsilon*(1-self.epsilon_ratio)
             )
             self.last_training_time = time.time() - train_start
 
@@ -199,7 +203,8 @@ class CEGISLoop:
                 system_specifics=system_specifics,  # Use updated system_specifics
                 compute_hamiltonian=self.example.hamiltonian_fn,
                 compute_boundary=self.example.boundary_fn,
-                epsilon=self.current_epsilon
+                epsilon=self.current_epsilon,
+                epsilon_ratio = self.epsilon_ratio
             )
             # Store timing information
             self.timing_history.append(TimingStats(
@@ -235,9 +240,6 @@ class CEGISLoop:
                                     epsilon=self.current_epsilon,
                                     model=self.example.model)
                 
-                # Train on counterexample
-                self.current_epsilon *= 1.05  # Increase epsilon by 5%
-
                 # Create a subdirectory for this counterexample iteration inside the checkpoint directory
                 counter_dir = os.path.join(base_dir, f"iteration_{iteration_count+1}")
                 os.makedirs(counter_dir, exist_ok=True)
@@ -262,7 +264,8 @@ class CEGISLoop:
                     device=self.device,
                     is_finetuning=True,  # Set fine-tuning flag for counterexample training
                     momentum=0.9,  # Add momentum for fine-tuning
-                    epsilon=self.current_epsilon  # Pass current epsilon value
+                    epsilon_bndry=self.current_epsilon*self.epsilon_ratio,
+                    epsilon_diff=self.current_epsilon*(1-self.epsilon_ratio)
                 )
                 self.last_training_time = time.time() - train_start
                 self.current_symbolic_model = None  # Reset symbolic model after training

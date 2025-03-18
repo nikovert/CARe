@@ -22,11 +22,12 @@ def train(model: torch.nn.Module,
           time_min: float = 0.0,
           time_max: float = 1.0,
           validation_fn: Optional[Callable] = None, 
-          epsilon: float = 0.2,
+          epsilon_bndry: float = 0.01,
+          epsilon_diff: float = 0.2,
           device: Optional[torch.device] = None,
           clip_grad: bool = True, 
           use_amp: bool = True,
-          l1_lambda: float = 1e-5,
+          l1_lambda: float = 0,
           weight_decay: float = 1e-5,
           is_finetuning: bool = False,
           momentum: float = 0.9,
@@ -52,7 +53,7 @@ def train(model: torch.nn.Module,
         device: Device to use for training (default: CUDA if available, else CPU)
         clip_grad: Whether to clip gradients during training (default: True)
         use_amp: Whether to use automatic mixed precision (default: True for CUDA)
-        l1_lambda: L1 regularization strength (default: 1e-5)
+        l1_lambda: L1 regularization strength (default: 0)
         weight_decay: L2 regularization strength (default: 1e-5)
         is_finetuning: Whether this is a fine-tuning run (default: False)
         momentum: Momentum parameter for SGD when fine-tuning (default: 0.9)
@@ -207,12 +208,12 @@ def train(model: torch.nn.Module,
                         l1_loss += F.l1_loss(param, torch.zeros_like(param), reduction='sum')
                     train_loss += l1_lambda * l1_loss
 
-            dichlet_condition_SAT = losses['dirichlet'].max() < epsilon*0.75
-            diff_constraint_SAT =  losses['diff_constraint_hom'].max() < epsilon # Would need to be adapted if time hoizon is not 1
+            dichlet_condition_SAT = losses['dirichlet'].max() < epsilon_bndry
+            diff_constraint_SAT =  losses['diff_constraint_hom'].max() < epsilon_diff # Would need to be adapted if time hoizon is not 1
 
             if dichlet_condition_SAT and (curriculum.is_pretraining or diff_constraint_SAT):
                 progress_flag = True
-                if curriculum.get_progress() == 1.0 and losses['diff_constraint_hom'].max() < epsilon*0.95:
+                if curriculum.get_progress() == 1.0 and losses['diff_constraint_hom'].max() < epsilon_diff*0.95:
                     patience += 1
                     max_lambda = 0.3
                     stopping_flag = patience > 1000  # Stop after minimum of 1000 consistent epochs

@@ -254,6 +254,7 @@ def create_constraint_data(constraint_id: int,
 
 def prepare_constraint_data_batch(state_dim: int, 
                                 epsilon: float, 
+                                epsilon_ratio: float,
                                 delta: float,
                                 min_with: str = 'none',
                                 reach_mode: str = 'forward',
@@ -317,33 +318,33 @@ def prepare_constraint_data_batch(state_dim: int,
             
         # Initial time constraint: boundary_2
         constraint_data_objects.append(
-            create_constraint_data(constraint_id, 'boundary_2', True, state_dim, epsilon, delta, 
+            create_constraint_data(constraint_id, 'boundary_2', True, state_dim, epsilon*epsilon_ratio, delta, 
                                   reach_mode, set_type)
         )
     else:
         # For non-initial time constraints: derivative_1, derivative_2
         for time_range in time_ranges:
             constraint_data_objects.append(
-                create_constraint_data(constraint_id, 'derivative_1', False, state_dim, epsilon, delta, 
+                create_constraint_data(constraint_id, 'derivative_1', False, state_dim, epsilon*(1-epsilon_ratio), delta, 
                                       reach_mode, set_type, time_range)
             )
             constraint_id += 1
             
             constraint_data_objects.append(
-                create_constraint_data(constraint_id, 'derivative_2', False, state_dim, epsilon, delta, 
+                create_constraint_data(constraint_id, 'derivative_2', False, state_dim, epsilon*(1-epsilon_ratio), delta, 
                                       reach_mode, set_type, time_range)
             )
             constraint_id += 1
             
         # Initial time constraints: boundary_1, boundary_2
         constraint_data_objects.append(
-            create_constraint_data(constraint_id, 'boundary_1', True, state_dim, epsilon, delta, 
+            create_constraint_data(constraint_id, 'boundary_1', True, state_dim, epsilon*epsilon_ratio, delta, 
                                   reach_mode, set_type)
         )
         constraint_id += 1
         
         constraint_data_objects.append(
-            create_constraint_data(constraint_id, 'boundary_2', True, state_dim, epsilon, delta, 
+            create_constraint_data(constraint_id, 'boundary_2', True, state_dim, epsilon*epsilon_ratio, delta, 
                                   reach_mode, set_type)
         )
     
