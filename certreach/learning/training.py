@@ -143,7 +143,6 @@ def train(model: torch.nn.Module,
         stopping_flag = False
         progress_flag = False # Flag to indicate if curriculum should procude forward
         for epoch in range(0, max_epochs): 
-            start_time = time.time()
             # Update curriculum scheduler epoch at the start of each epoch
             curriculum.step(progress_flag)
             
@@ -173,6 +172,12 @@ def train(model: torch.nn.Module,
                     
                 if stopping_flag:
                     logger.info("Training stopped as loss is below epsilon and curriculum is complete")
+                    logger.info(f"Total Loss: {train_loss:.6f},"
+                                f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
+                                f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}")
+                    logger.info(f"Diff Constraint Mean: {losses['diff_constraint_hom'].mean():.6f}, "
+                                f"Diff Constraint Max: {losses['diff_constraint_hom'].max():.6f}, "
+                                f"Dirichlet Max: {losses['dirichlet'].max():.6f}")
                     break
 
             # Get a fresh batch of data

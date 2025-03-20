@@ -83,7 +83,7 @@ def parse_args():
                   help='Minimum epsilon to achieve before terminating CEGIS')
     p.add_argument('--epsilon_radius', type=float, default=0.1,
                   help='Radius around counterexample points for sampling')
-    p.add_argument('--max_iterations', type=int, default=3,
+    p.add_argument('--max_iterations', type=int, default=7,
                   help='Maximum number of CEGIS iterations')
     p.add_argument('--solver', type=str, default='auto', choices=['auto', 'dreal', 'z3', 'marabou'],
                   help='SMT solver to use for verification (auto will select based on problem)')
