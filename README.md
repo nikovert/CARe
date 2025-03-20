@@ -1,4 +1,4 @@
-# Certified Hamilton-Jacobi Reachability
+# Certified Approximate Reachability (CARe): Formal Error Bounds on Deep Learning of Reachable Sets
 
 A Python package for certified Hamilton-Jacobi reachability analysis.
 
