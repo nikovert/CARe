@@ -18,7 +18,7 @@ from certreach.verification.verifier_utils.constraint_builder import (
 
 logger = logging.getLogger(__name__)
 
-def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian, compute_boundary, solver_name, epsilon=0.5, epsilon_ratio=0.02, delta = 0.001,
+def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian, compute_boundary, solver_name, epsilon=0.5, epsilon_ratio=0.05, delta = 0.001,
                       reach_mode='forward', min_with='none', set_type='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
     """
     Verifies if the HJB equation holds using dReal for a double integrator system.
@@ -82,7 +82,7 @@ def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian
         constraint_data_batch = prepare_constraint_data_batch(
             state_dim=state_dim,
             epsilon=epsilon,
-            epsilon_ratio = epsilon_ratio,
+            epsilon_ratio=epsilon_ratio,
             delta=delta,
             min_with=min_with,
             reach_mode=reach_mode,
@@ -347,7 +347,7 @@ class SMTVerifier:
         compute_hamiltonian: Callable,
         compute_boundary: Callable,
         epsilon: float,
-        epsilon_ratio: float = 0.02
+        epsilon_ratio: float = 0.05
     ) -> Tuple[bool, Optional[torch.Tensor], Dict[str, float]]:
         """
         Verify a trained model using dReal/Z3/Marabou.
@@ -394,7 +394,7 @@ class SMTVerifier:
             compute_hamiltonian=compute_hamiltonian,
             compute_boundary=compute_boundary,
             epsilon=epsilon,
-            epsilon_ratio = epsilon_ratio,
+            epsilon_ratio=epsilon_ratio,
             delta=self.delta,
             solver_name = solver_name,
             reach_mode=system_specifics.get('reach_mode', 'forward'),
