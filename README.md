@@ -1,11 +1,6 @@
 # Certified Approximate Reachability (CARe): Formal Error Bounds on Deep Learning of Reachable Sets
 
-A Python package for certified Hamilton-Jacobi reachability analysis.
-
-## Prerequisites
-
-- Python 3.9
-- dReal or Z3 (SMT solver)
+The accompanying code for "Certified Approximate Reachability (CARe): Formal Error Bounds on Deep Learning of Reachable Sets"
 
 ## Installing dReal
 
