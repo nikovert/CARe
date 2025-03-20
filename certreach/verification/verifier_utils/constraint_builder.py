@@ -1,67 +1,35 @@
-"""
-Utility functions for building and serializing dReal constraints across processes.
-This module provides mechanisms to rebuild complex mathematical expressions from serialized forms.
-"""
-
 import logging
-import dreal
-from dreal import Variable, And, CheckSatisfiability
 from typing import Dict, List, Any, Tuple, Optional, Callable
+import ast
 import time
 import multiprocessing as mp
+from certreach.verification.verifier_utils.dreal_utils import dreal_function_map, check_with_dreal, parse_dreal_expression
+from certreach.verification.verifier_utils.marabou_utils import check_with_marabou
+from certreach.verification.verifier_utils.z3_utils import z3_function_map, check_with_z3, parse_z3_expression
+
+function_maps = {
+    'z3': z3_function_map,
+    'dreal': dreal_function_map,
+    'marabou': dreal_function_map # Marabou uses dReal function map
+}
 
 logger = logging.getLogger(__name__)
 
-def parse_expression(expr_str: str, variables: Dict[str, Variable]) -> Any:
+def rebuild_constraint(func_map,
+                    constraint_type: str, 
+                    variables: Dict[str, Any],
+                    value_fn_expr: str,
+                    partials_expr: Dict[str, str],
+                    boundary_fn_expr: str,
+                    hamiltonian_expr: Callable,
+                    epsilon: float,
+                    is_initial_time: bool = False):
     """
-    Parse a string representation of a dReal expression and rebuild it.
-    This is a simplified parser for demonstration purposes.
-    
-    Args:
-        expr_str: String representation of a dReal expression
-        variables: Dictionary mapping variable names to dReal Variable objects
-    
-    Returns:
-        Rebuilt dReal expression
-    """
-    # This would be a much more complex parser in a real implementation
-    # For now, we'll handle some simple cases
-    
-    # Replace variable names with their dReal Variable objects
-    for var_name, _ in variables.items():
-        expr_str = expr_str.replace(var_name, f"variables['{var_name}']")
-    
-    # Handle common operators and functions
-    expr_str = expr_str.replace("sin", "dreal.sin")
-    expr_str = expr_str.replace("cos", "dreal.cos")
-    expr_str = expr_str.replace("exp", "dreal.exp")
-    expr_str = expr_str.replace("tanh", "dreal.tanh")
-    expr_str = expr_str.replace("Max", "dreal.Max")
-    expr_str = expr_str.replace("Min", "dreal.Min")
-    
-    try:
-        # Evaluate the expression string to rebuild it
-        # Use eval with the necessary context
-        context = {"dreal": dreal, "variables": variables}
-        return eval(expr_str, context)
-    except Exception as e:
-        logger.error(f"Error parsing expression '{expr_str}': {e}")
-        return None
-
-def rebuild_constraint(constraint_type: str, 
-                      variables: Dict[str, Variable],
-                      value_fn_expr: str,
-                      partials_expr: Dict[str, str],
-                      boundary_fn_expr: str,
-                      hamiltonian_expr: Callable,
-                      epsilon: float,
-                      is_initial_time: bool = False) -> dreal.Formula:
-    """
-    Rebuild a dReal constraint from its components.
+    Rebuild a dReal/z3 constraint from its components.
     
     Args:
         constraint_type: Type of constraint ('boundary_1', 'derivative_1', etc.)
-        variables: Dictionary of dReal Variables
+        variables: Dictionary of dReal/z3 Variables
         value_fn_expr: String representation of value function
         partials_expr: Dictionary of partial derivative strings
         boundary_fn_expr: String representation of boundary function
@@ -72,63 +40,78 @@ def rebuild_constraint(constraint_type: str,
     Returns:
         Rebuilt dReal Formula constraint
     """
-    try:
-        # Extract time and state variables
-        t = variables.get("x_1_1")
-        state_vars = []
-        partials = []
+    # Extract time and state variables
+    state_vars = []
+    partial_state_vars = []
+    for key, value in variables.items():
+        if key.endswith("_1"):
+            continue
+        if key.startswith("x_1_"):
+            state_vars.append(value)
+        elif key.startswith("partial_x_1_"):
+            partial_state_vars.append(value)
+
+    t = variables.get('x_1_1')
+    dv_dt = variables.get('partial_x_1_1')
+
+    # Parse expressions
+    if func_map['solver_name'] == 'z3':
+        parse = parse_z3_expression
+    elif func_map['solver_name'] == 'dreal':
+        parse = lambda s: parse_dreal_expression(s, variables, func_map)
+    else:
+        ValueError(f"Unknown solver: {func_map['solver_name']}")
+
+    value_fn = parse(value_fn_expr)
+    boundary_value = parse(boundary_fn_expr)
+    hamiltonian_value = parse(hamiltonian_expr)
+    
+    # Add partial constraints
+    if 'partial' in hamiltonian_expr:
+        partial_constraints = [func_map['and'](variables[key] == parse(expr)) for key, expr in partials_expr.items()]
+    else:
+        partial_constraints = []
+        dv_dt = parse(partials_expr['partial_x_1_1'])
+    
+    # Define state constraints
+    if is_initial_time:
+        time_constraint = (t == 0)
+    else:
+        time_constraint = func_map['and'](t >= 0, t <= 1)
         
-        for i in range(2, len(variables) + 1):
-            var_name = f"x_1_{i}"
-            if var_name in variables:
-                state_vars.append(variables[var_name])
-        
-        # Parse expressions
-        value_fn = parse_expression(value_fn_expr, variables)
-        boundary_value = parse_expression(boundary_fn_expr, variables)
-        
-        # Get partial derivatives
-        dv_dt = parse_expression(partials_expr.get(f"partial_x_1_1", "0"), variables)
-        for i in range(2, len(variables) + 1):
-            partial_name = f"partial_x_1_{i}"
-            if partial_name in partials_expr:
-                partials.append(parse_expression(partials_expr[partial_name], variables))
-        
-        hamiltonian_value = parse_expression(hamiltonian_expr, variables)
-        
-        # Define state constraints
-        if is_initial_time:
-            time_constraint = (t == 0)
-        else:
-            time_constraint = And(t >= 0, t <= 1)
-            
-        space_constraints = [And(var >= -1, var <= 1) for var in state_vars]
-        
-        # Build the specified constraint
-        if constraint_type == 'boundary_1':
-            return And(time_constraint, *space_constraints, value_fn - boundary_value > epsilon)
-        elif constraint_type == 'boundary_2':
-            return And(time_constraint, *space_constraints, value_fn - boundary_value < -epsilon)
-        elif constraint_type == 'derivative_1':
-            return And(time_constraint, *space_constraints, dv_dt + hamiltonian_value < -epsilon)
-        elif constraint_type == 'derivative_2':
-            return And(time_constraint, *space_constraints, dv_dt + hamiltonian_value > epsilon)
-        elif constraint_type == 'target_1':
-            return And(time_constraint, *space_constraints, 
-                      And(dv_dt + hamiltonian_value < -epsilon, value_fn - boundary_value < -epsilon))
-        elif constraint_type == 'target_2':
-            return And(time_constraint, *space_constraints, dv_dt + hamiltonian_value > epsilon)
-        elif constraint_type == 'target_3':
-            return And(time_constraint, *space_constraints, value_fn - boundary_value > epsilon)
-        else:
-            logger.error(f"Unknown constraint type: {constraint_type}")
-            return None
-            
-    except Exception as e:
-        logger.error(f"Error building constraint: {e}")
+    space_constraints = [func_map['and'](var >= -1, var <= 1) for var in state_vars]
+    
+    # Build the specified constraint
+    if constraint_type == 'derivative_boundary':
+        derivative_constraint = func_map['abs'](dv_dt + hamiltonian_value) > epsilon
+        boundary_constraint = func_map['and'](func_map['abs'](value_fn - boundary_value) > epsilon, (t == 0))
+        return func_map['and'](time_constraint, *space_constraints, func_map['or'](derivative_constraint,boundary_constraint) , *partial_constraints)
+    elif constraint_type == 'boundary':
+        return func_map['and'](time_constraint, *space_constraints, func_map['abs'](value_fn - boundary_value) > epsilon)
+    elif constraint_type == 'derivative':
+        derivative_constraint = func_map['abs'](dv_dt + hamiltonian_value) > epsilon
+        return func_map['and'](time_constraint, *space_constraints, derivative_constraint, *partial_constraints)
+    # Handle split cases
+    elif constraint_type == 'boundary_1':
+        return func_map['and'](time_constraint, *space_constraints, value_fn - boundary_value > epsilon)
+    elif constraint_type == 'boundary_2':
+        return func_map['and'](time_constraint, *space_constraints, value_fn - boundary_value < -epsilon)
+    elif constraint_type == 'derivative_1':
+        return func_map['and'](time_constraint, *space_constraints, dv_dt + hamiltonian_value < -epsilon, *partial_constraints)
+    elif constraint_type == 'derivative_2':
+        return func_map['and'](time_constraint, *space_constraints, dv_dt + hamiltonian_value > epsilon, *partial_constraints)
+    elif constraint_type == 'target_1':
+        return func_map['and'](time_constraint, *space_constraints, 
+                    func_map['and'](dv_dt + hamiltonian_value < -epsilon, value_fn - boundary_value < -epsilon), *partial_constraints)
+    elif constraint_type == 'target_2':
+        return func_map['and'](time_constraint, *space_constraints, dv_dt + hamiltonian_value > epsilon, *partial_constraints)
+    elif constraint_type == 'target_3':
+        return func_map['and'](time_constraint, *space_constraints, value_fn - boundary_value > epsilon, *partial_constraints)
+    else:
+        logger.error(f"Unknown constraint type: {constraint_type}")
         return None
 
-def process_check_advanced(constraint_data, hamiltonian_expr, value_fn_expr, boundary_fn_expr, partials_expr) -> Tuple[int, Optional[str]]:
+def process_check_advanced(solver_name, constraint_data, hamiltonian_expr, value_fn_expr, boundary_fn_expr, partials_expr) -> Tuple[int, Optional[str]]:
     """
     Advanced process-compatible function to check a constraint by recreating all necessary components.
     
@@ -142,25 +125,40 @@ def process_check_advanced(constraint_data, hamiltonian_expr, value_fn_expr, bou
     Returns:
         Tuple of (constraint_id, result_string)
     """
-    try:
-        # Extract basic constraint data
-        constraint_id = constraint_data['constraint_id']
-        constraint_type = constraint_data['constraint_type']
-        epsilon = constraint_data['epsilon']
-        delta = constraint_data['delta']
-        is_initial_time = constraint_data['is_initial_time']
-        
-        # Create variables
-        time_var = Variable("x_1_1")
-        state_vars = [Variable(f"x_1_{i+2}") for i in range(len(constraint_data['space_constraints']))]
-        
-        # Create dictionary of all variables
-        variables = {"x_1_1": time_var}
-        for i, var in enumerate(state_vars):
-            variables[f"x_1_{i+2}"] = var
-        
+    # Create the function map based on the solver name
+    func_map = function_maps[solver_name]
+
+    # Extract basic constraint data
+    constraint_id = constraint_data['constraint_id']
+    constraint_type = constraint_data['constraint_type']
+    epsilon = constraint_data['epsilon']
+    delta = constraint_data['delta']
+    is_initial_time = constraint_data['is_initial_time']
+    
+    # Create variables
+    time_var = func_map['variable']("x_1_1")
+    state_vars = [func_map['variable'](f"x_1_{i+2}") for i in range(len(constraint_data['space_constraints']))]
+    partial_vars = [func_map['variable'](str(key)) for key, _ in partials_expr.items()]
+    
+    # Create dictionary of all variables
+    variables = {"x_1_1": time_var}
+    for i, var in enumerate(state_vars):
+        variables[str(var)] = var
+    for i, var in enumerate(partial_vars):
+        variables[str(var)] = var
+    # Check constraint
+    proc_name = mp.current_process().name
+    logger.debug(f"Process {proc_name} checking constraint {constraint_id}: {constraint_type}")
+    
+    start_time = time.monotonic()
+    if solver_name == 'marabou' and constraint_type not in ['boundary_1', 'boundary_2', 'target_1', 'target_3']:
+        result = check_with_marabou(constraint_data, 
+                            partials_expr,
+                            hamiltonian_expr)
+    else:
         # Use rebuild_constraint to create the constraint
         constraint = rebuild_constraint(
+            func_map=func_map,
             constraint_type=constraint_type,
             variables=variables,
             value_fn_expr=value_fn_expr,
@@ -175,38 +173,37 @@ def process_check_advanced(constraint_data, hamiltonian_expr, value_fn_expr, bou
             logger.error(f"Failed to build constraint {constraint_id}")
             return constraint_id, f"Error: Failed to build constraint {constraint_type}"
         
-        # Check constraint
-        proc_name = mp.current_process().name
-        logger.debug(f"Process {proc_name} checking constraint {constraint_id}: {constraint_type}")
-        
-        start_time = time.monotonic()
-        
         # Execute the constraint check
-        result = CheckSatisfiability(constraint, delta)
-        check_time = time.monotonic() - start_time
-        
-        if result:
-            logger.info(f"Process {proc_name} found counterexample for constraint {constraint_id} in {check_time:.4f}s")
-            return constraint_id, str(result)
+        if solver_name == 'z3':
+            result = check_with_z3(constraint)
+        elif solver_name == 'dreal' or 'marabou':
+            result = check_with_dreal(constraint, delta)
         else:
-            logger.info(f"Process {proc_name} found no counterexample for constraint {constraint_id} in {check_time:.4f}s")
-            return constraint_id, None
-            
-    except Exception as e:
-        logger.error(f"Process {mp.current_process().name} error: {e}")
-        return constraint_data.get('constraint_id', -1), f"Error: {str(e)}"
+            ValueError(f"Unknown solver: {solver_name}")
 
-def serialize_dreal_expression(expr) -> str:
+    check_time = time.monotonic() - start_time
+    
+    if result:
+        logger.info(f"Process {proc_name} found counterexample for constraint {constraint_id} in {check_time:.4f}s")
+        return constraint_id, str(result)
+    else:
+        logger.info(f"Process {proc_name} found no counterexample for constraint {constraint_id} in {check_time:.4f}s")
+        return constraint_id, None
+
+def serialize_expression(expr, solver) -> str:
     """
-    Convert a dReal expression to a serializable string format.
+    Convert a dReal/z3 expression to a serializable string format.
     
     Args:
-        expr: dReal expression
+        expr: dReal/z3 expression
         
     Returns:
         String representation of the expression
     """
-    return str(expr)
+    if solver == 'z3':
+        return expr.serialize()
+    else: # For dreal and Marabou, just convert to string
+        return str(expr)
 
 def create_constraint_data(constraint_id: int,
                           constraint_type: str,
@@ -257,11 +254,12 @@ def create_constraint_data(constraint_id: int,
 
 def prepare_constraint_data_batch(state_dim: int, 
                                 epsilon: float, 
+                                epsilon_ratio: float,
                                 delta: float,
                                 min_with: str = 'none',
                                 reach_mode: str = 'forward',
                                 set_type: str = 'set',
-                                time_subdivisions: int = 4) -> List[Dict]:
+                                time_subdivisions: int = 1) -> List[Dict]:
     """
     Prepare a batch of constraint data objects for parallel checking.
     Non-initial time constraints are divided into multiple constraints over subintervals.
@@ -320,33 +318,33 @@ def prepare_constraint_data_batch(state_dim: int,
             
         # Initial time constraint: boundary_2
         constraint_data_objects.append(
-            create_constraint_data(constraint_id, 'boundary_2', True, state_dim, epsilon, delta, 
+            create_constraint_data(constraint_id, 'boundary_2', True, state_dim, epsilon*epsilon_ratio, delta, 
                                   reach_mode, set_type)
         )
     else:
         # For non-initial time constraints: derivative_1, derivative_2
         for time_range in time_ranges:
             constraint_data_objects.append(
-                create_constraint_data(constraint_id, 'derivative_1', False, state_dim, epsilon, delta, 
+                create_constraint_data(constraint_id, 'derivative_1', False, state_dim, epsilon*(1-epsilon_ratio), delta, 
                                       reach_mode, set_type, time_range)
             )
             constraint_id += 1
             
             constraint_data_objects.append(
-                create_constraint_data(constraint_id, 'derivative_2', False, state_dim, epsilon, delta, 
+                create_constraint_data(constraint_id, 'derivative_2', False, state_dim, epsilon*(1-epsilon_ratio), delta, 
                                       reach_mode, set_type, time_range)
             )
             constraint_id += 1
             
         # Initial time constraints: boundary_1, boundary_2
         constraint_data_objects.append(
-            create_constraint_data(constraint_id, 'boundary_1', True, state_dim, epsilon, delta, 
+            create_constraint_data(constraint_id, 'boundary_1', True, state_dim, epsilon*epsilon_ratio, delta, 
                                   reach_mode, set_type)
         )
         constraint_id += 1
         
         constraint_data_objects.append(
-            create_constraint_data(constraint_id, 'boundary_2', True, state_dim, epsilon, delta, 
+            create_constraint_data(constraint_id, 'boundary_2', True, state_dim, epsilon*epsilon_ratio, delta, 
                                   reach_mode, set_type)
         )
     
@@ -354,31 +352,44 @@ def prepare_constraint_data_batch(state_dim: int,
 
 def parse_counterexample(result_str: str) -> Dict[str, Tuple[float, float]]:
     """
-    Parse the counterexample from the dReal result string.
+    Parse the counterexample from the dReal/z3 result string.
     
     Args:
-        result_str: String representation of dReal result box
+        result_str: String representation of dReal/z3 result box
         
     Returns:
         Dictionary mapping variable names to (min, max) value ranges
     """
     counterexample = {}
     try:
-        for line in result_str.strip().split('\n'):
-            # Parse each variable and its range
-            if ':' not in line:
-                continue
-                
-            variable, value_range = line.split(':')
-            value_range = value_range.strip()
-            
-            if value_range.startswith('[') and value_range.endswith(']'):
-                # Extract lower and upper bounds
-                bounds = value_range.strip('[] ').split(',')
-                if len(bounds) == 2:
-                    lower, upper = map(float, bounds)
-                    counterexample[variable.strip()] = (lower, upper)
+        # Check if parsing dict format
+        if ':' in result_str:
+            if '\n' in result_str:
+                for line in result_str.strip().split('\n'):
+                    # Parse each variable and its range
+                    if ':' not in line:
+                        continue
+                        
+                    variable, value_range = line.split(':')
+                    value_range = value_range.strip()
                     
+                    if value_range.startswith('[') and value_range.endswith(']'):
+                        # Extract lower and upper bounds
+                        bounds = value_range.strip('[] ').split(',')
+                        if len(bounds) == 2:
+                            lower, upper = map(float, bounds)
+                            counterexample[variable.strip()] = (lower, upper)
+            else:
+                result = ast.literal_eval(result_str)
+                for key, value in result.items():
+                    if isinstance(value, list):
+                        counterexample[key] = tuple(value)
+                    else:
+                        counterexample[key] = (value, value)
+        else:
+            clean_str = result_str.strip('[]')
+            # Extract all floating point numbers
+            counterexample = [float(x) for x in clean_str.split(',')]
     except Exception as e:
         logger.error(f"Failed to parse counterexample: {e}")
         return None

@@ -22,12 +22,13 @@ def train(model: torch.nn.Module,
           time_min: float = 0.0,
           time_max: float = 1.0,
           validation_fn: Optional[Callable] = None, 
-          epsilon: float = 0.2,
+          epsilon_bndry: float = 0.01,
+          epsilon_diff: float = 0.2,
           device: Optional[torch.device] = None,
           clip_grad: bool = True, 
           use_amp: bool = True,
-          l1_lambda: float = 1e-4,
-          weight_decay: float = 1e-3,
+          l1_lambda: float = 0,
+          weight_decay: float = 1e-5,
           is_finetuning: bool = False,
           momentum: float = 0.9,
           **kwargs
@@ -52,8 +53,8 @@ def train(model: torch.nn.Module,
         device: Device to use for training (default: CUDA if available, else CPU)
         clip_grad: Whether to clip gradients during training (default: True)
         use_amp: Whether to use automatic mixed precision (default: True for CUDA)
-        l1_lambda: L1 regularization strength (default: 1e-4)
-        weight_decay: L2 regularization strength (default: 1e-3)
+        l1_lambda: L1 regularization strength (default: 0)
+        weight_decay: L2 regularization strength (default: 1e-5)
         is_finetuning: Whether this is a fine-tuning run (default: False)
         momentum: Momentum parameter for SGD when fine-tuning (default: 0.9)
         **kwargs: Additional arguments to pass to the optimizer
@@ -80,7 +81,7 @@ def train(model: torch.nn.Module,
     
     # Enable automatic mixed precision for CUDA devices
     use_amp = device.type == 'cuda'
-    scaler = torch.amp.GradScaler() if use_amp else None  # Updated GradScaler import
+    scaler = torch.amp.GradScaler() if use_amp else None
     
     # Enable CUDA optimizations
     if device.type == 'cuda':
@@ -134,13 +135,14 @@ def train(model: torch.nn.Module,
 
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     model.checkpoint_dir = checkpoints_dir  # Set checkpoint directory for model
+    patience = 0
+    max_lambda = 0.1
 
-    with tqdm(total=max_epochs) as pbar:
+    with tqdm(total=max_epochs, dynamic_ncols=True) as pbar:
         train_losses = []
         stopping_flag = False
         progress_flag = False # Flag to indicate if curriculum should procude forward
         for epoch in range(0, max_epochs): 
-            start_time = time.time()
             # Update curriculum scheduler epoch at the start of each epoch
             curriculum.step(progress_flag)
             
@@ -170,6 +172,12 @@ def train(model: torch.nn.Module,
                     
                 if stopping_flag:
                     logger.info("Training stopped as loss is below epsilon and curriculum is complete")
+                    logger.info(f"Total Loss: {train_loss:.6f},"
+                                f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
+                                f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}")
+                    logger.info(f"Diff Constraint Mean: {losses['diff_constraint_hom'].mean():.6f}, "
+                                f"Diff Constraint Max: {losses['diff_constraint_hom'].max():.6f}, "
+                                f"Dirichlet Max: {losses['dirichlet'].max():.6f}")
                     break
 
             # Get a fresh batch of data
@@ -195,7 +203,7 @@ def train(model: torch.nn.Module,
                 # Apply weights to losses and normalize by batch size
                 max_train_loss = sum(loss.max() * loss_weights.get(name, 1.0)
                                 for name, loss in losses.items())
-                max_lambda = 0.1
+                
                 train_loss = mean_train_loss + max_lambda*max_train_loss
                 
                 # Calculate total loss and add L1 regularization using PyTorch's built-in function
@@ -205,13 +213,17 @@ def train(model: torch.nn.Module,
                         l1_loss += F.l1_loss(param, torch.zeros_like(param), reduction='sum')
                     train_loss += l1_lambda * l1_loss
 
-            dichlet_condition_SAT = losses['dirichlet'].max() < epsilon*0.75
-            diff_constraint_SAT =  losses['diff_constraint_hom'].max() < epsilon # Would need to be adapted if time hoizon is not 1
+            dichlet_condition_SAT = losses['dirichlet'].max() < epsilon_bndry
+            diff_constraint_SAT =  losses['diff_constraint_hom'].max() < epsilon_diff # Would need to be adapted if time hoizon is not 1
 
             if dichlet_condition_SAT and (curriculum.is_pretraining or diff_constraint_SAT):
                 progress_flag = True
-                if curriculum.get_progress() == 1.0 and losses['diff_constraint_hom'].max() < epsilon*0.95:
-                    stopping_flag = epoch > 100  # Stop after minimum of 100 epochs
+                if curriculum.get_progress() == 1.0 and losses['diff_constraint_hom'].max() < epsilon_diff*0.95:
+                    patience += 1
+                    max_lambda = 0.3
+                    stopping_flag = patience > 1000  # Stop after minimum of 1000 consistent epochs
+                else:
+                    patience = 0
             else:
                 progress_flag = False
 
@@ -234,15 +246,14 @@ def train(model: torch.nn.Module,
             if (epoch % epochs_til_checkpoint/10 == 0) or stopping_flag:
                 tqdm.write(f"Epoch {epoch}, Total Loss: {train_loss:.6f},"
                           f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
-                          f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}, "
-                          f"Time: {time.time() - start_time:.3f}s")
+                          f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}")
                 tqdm.write(f"Diff Constraint Mean: {losses['diff_constraint_hom'].mean():.6f}, "
                           f"Diff Constraint Max: {losses['diff_constraint_hom'].max():.6f}, "
                           f"Dirichlet Max: {losses['dirichlet'].max():.6f}")
                 curr_progress = curriculum.get_progress()
                 t_min, t_max = curriculum.get_time_range()
                 phase = "Pretraining" if curriculum.is_pretraining else "Curriculum"
-                tqdm.write(f"{phase} - Progress: {curr_progress:.2%}, Time range: [{t_min:.3f}, {t_max:.3f}]")
+                tqdm.write(f"{phase} Progress: {curr_progress:.2%}, Time range: [{t_min:.3f}, {t_max:.3f}]")
 
             pbar.update(1)
 
@@ -261,6 +272,13 @@ def train(model: torch.nn.Module,
             epoch=max_epochs,
             training_completed=True
         )
+        
+        logger.info(f"End of Training, Total Loss: {train_loss:.6f},"
+                    f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
+                    f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}")
+        logger.info(f"Diff Constraint Mean: {losses['diff_constraint_hom'].mean():.6f}, "
+                    f"Diff Constraint Max: {losses['diff_constraint_hom'].max():.6f}, "
+                    f"Dirichlet Max: {losses['dirichlet'].max():.6f}")
 
         # Save final losses
         np.savetxt(checkpoints_dir / 'train_losses_final.txt', 

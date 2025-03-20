@@ -45,8 +45,6 @@ class CEGISLoop:
         prune_after_initial (bool): Whether to prune after initial training.
         verifier (SMTVerifier): The verifier instance used for formal verification.
         initial_lr (float): Initial learning rate for training.
-        fine_tune_lr (float): Learning rate for fine-tuning after counterexamples.
-        fine_tune_epochs (int): Number of epochs for fine-tuning.
         dataset (ReachabilityDataset): Training dataset instance.
         last_training_time (float): Duration of the most recent training phase.
     """
@@ -72,15 +70,14 @@ class CEGISLoop:
         self.min_epsilon = args.min_epsilon
         self.pruning_percentage = getattr(args, 'pruning_percentage', 0.10)  # Default threshold if not specified
         self.prune_after_initial = getattr(args, 'prune_after_initial', True)  # Whether to prune after initial training
+        self.epsilon_ratio = 0.05
         
         # Initialize verifier - use the specified solver preference if available
         solver_preference = getattr(args, 'solver', 'auto')
         self.verifier = SMTVerifier(device=self.device, solver_preference=solver_preference)
 
         self.initial_lr = args.lr
-        self.fine_tune_lr = getattr(args, 'fine_tune_lr', args.lr * 0.1)  # Configurable fine-tuning learning rate
-        self.fine_tune_epochs = getattr(args, 'fine_tune_epochs', args.num_epochs // 4)  # Configurable fine-tuning epochs
-                
+                 
         # Initialize dataset if not already existing
         self.dataset = ReachabilityDataset(
             batch_size=args.batch_size,
@@ -126,7 +123,8 @@ class CEGISLoop:
                 validation_fn=self.example.validate,
                 device=self.device,
                 is_finetuning=False,  # Initial training is not fine-tuning
-                epsilon=self.current_epsilon  # Pass current epsilon value
+                epsilon_bndry=self.current_epsilon*self.epsilon_ratio,
+                epsilon_diff=self.current_epsilon*(1-self.epsilon_ratio)
             )
             self.last_training_time = time.time() - train_start
             
@@ -152,7 +150,8 @@ class CEGISLoop:
                     device=self.device,
                     is_finetuning=True,  # Retraining pruned model is fine-tuning
                     momentum=0.9,  # Add momentum for fine-tuning
-                    epsilon=self.current_epsilon  # Pass current epsilon value
+                    epsilon_bndry=self.current_epsilon*self.epsilon_ratio,
+                    epsilon_diff=self.current_epsilon*(1-self.epsilon_ratio)
                 )
                 self.last_training_time += time.time() - train_start
         else:
@@ -173,7 +172,8 @@ class CEGISLoop:
                 device=self.device,
                 is_finetuning=True,  # Retraining pruned model is fine-tuning
                 momentum=0.9,  # Add momentum for fine-tuning
-                epsilon=self.current_epsilon  # Pass current epsilon value
+                epsilon_bndry=self.current_epsilon*self.epsilon_ratio,
+                epsilon_diff=self.current_epsilon*(1-self.epsilon_ratio)
             )
             self.last_training_time = time.time() - train_start
 
@@ -203,7 +203,8 @@ class CEGISLoop:
                 system_specifics=system_specifics,  # Use updated system_specifics
                 compute_hamiltonian=self.example.hamiltonian_fn,
                 compute_boundary=self.example.boundary_fn,
-                epsilon=self.current_epsilon
+                epsilon=self.current_epsilon,
+                epsilon_ratio = self.epsilon_ratio
             )
             # Store timing information
             self.timing_history.append(TimingStats(
@@ -227,7 +228,7 @@ class CEGISLoop:
                     if self.current_epsilon <= self.min_epsilon:
                         logger.info(f"Reached minimum epsilon threshold: {self.min_epsilon}")
                         break
-                    self.current_epsilon *= 0.75  # Reduce epsilon by 25%
+                    self.current_epsilon *= 0.9  # Reduce epsilon by 10%
                     # Ensure we don't go below minimum epsilon
                     self.current_epsilon = max(self.current_epsilon, self.min_epsilon)
                     self.args.epsilon = self.current_epsilon
@@ -236,12 +237,10 @@ class CEGISLoop:
                 validation_results = self.verifier.validate_counterexample(counterexample=counterexample, 
                                     loss_fn=self.example.loss_fn,
                                     compute_boundary=self.example.boundary_fn,
-                                    epsilon=self.current_epsilon,
+                                    epsilon_bndry=self.current_epsilon*self.epsilon_ratio,
+                                    epsilon_diff=self.current_epsilon*(1-self.epsilon_ratio),
                                     model=self.example.model)
                 
-                # Train on counterexample
-                self.current_epsilon *= 1.05  # Increase epsilon by 5%
-
                 # Create a subdirectory for this counterexample iteration inside the checkpoint directory
                 counter_dir = os.path.join(base_dir, f"iteration_{iteration_count+1}")
                 os.makedirs(counter_dir, exist_ok=True)
@@ -256,7 +255,7 @@ class CEGISLoop:
                     model=self.example.model,
                     dataset=self.dataset,
                     max_epochs=10*self.args.num_epochs,
-                    lr=self.fine_tune_lr,
+                    lr=self.args.lr*0.5,
                     epochs_til_checkpoint=self.args.epochs_til_ckpt,
                     model_dir=self.example.root_path,
                     loss_fn=self.example.loss_fn,
@@ -266,7 +265,8 @@ class CEGISLoop:
                     device=self.device,
                     is_finetuning=True,  # Set fine-tuning flag for counterexample training
                     momentum=0.9,  # Add momentum for fine-tuning
-                    epsilon=self.current_epsilon  # Pass current epsilon value
+                    epsilon_bndry=self.current_epsilon*self.epsilon_ratio,
+                    epsilon_diff=self.current_epsilon*(1-self.epsilon_ratio)
                 )
                 self.last_training_time = time.time() - train_start
                 self.current_symbolic_model = None  # Reset symbolic model after training

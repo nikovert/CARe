@@ -42,7 +42,8 @@ def parse_args():
                   help='Number of epochs between model checkpoints')
 
     # Model Settings
-    p.add_argument('--model_type', type=str, default='sine', choices=['sine', 'relu'],
+    p.add_argument('--model_type', type=str, default='sine', 
+                  choices=['sine', 'relu', 'relu_primitive'],
                   help='Activation function for the neural network')
     p.add_argument('--num_hl', type=int, default=0,
                   help='Number of hidden layers')
@@ -82,9 +83,9 @@ def parse_args():
                   help='Minimum epsilon to achieve before terminating CEGIS')
     p.add_argument('--epsilon_radius', type=float, default=0.1,
                   help='Radius around counterexample points for sampling')
-    p.add_argument('--max_iterations', type=int, default=50,
+    p.add_argument('--max_iterations', type=int, default=7,
                   help='Maximum number of CEGIS iterations')
-    p.add_argument('--solver', type=str, default='auto', choices=['auto', 'dreal', 'z3'],
+    p.add_argument('--solver', type=str, default='auto', choices=['auto', 'dreal', 'z3', 'marabou'],
                   help='SMT solver to use for verification (auto will select based on problem)')
     
     # Add device argument
@@ -96,9 +97,9 @@ def parse_args():
                   help='Compare results with true values after verification')
 
     # Dataset Settings
-    p.add_argument('--percentage_in_counterexample', type=float, default=20.0,
+    p.add_argument('--percentage_in_counterexample', type=float, default=5.0,
                   help='Percentage of points to sample near counterexamples')
-    p.add_argument('--percentage_at_t0', type=float, default=20.0,
+    p.add_argument('--percentage_at_t0', type=float, default=2.0,
                   help='Percentage of points to sample at t=0')
 
     args = p.parse_args()
@@ -153,6 +154,9 @@ def main():
     log_file = os.path.join(exp_folder_path, 'training.log')
     configure_logging(log_file, log_level=logging.DEBUG)
     
+    # Log the choice of arguments
+    logger.info(f"Arguments: {args.__dict__}")
+    
     # Simplified device setup for single GPU
     if args.device == 'cuda' and torch.cuda.is_available():
         device = torch.device('cuda:0')  # Use the only GPU
@@ -175,9 +179,9 @@ def main():
     if prev_folder_path and args.load_model:
         loaded_model = load_model_from_folder(example, prev_folder_path)
 
-    # Print model information
+    # Print model information to logger
     logger.info("Model Architecture:")
-    print(example.model)
+    logger.info(example.model)
     
     example.root_path = exp_folder_path
 

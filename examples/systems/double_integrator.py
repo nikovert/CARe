@@ -30,9 +30,6 @@ def double_integrator_boundary(states, radius=sqrt(0.25)):
     else:
         # Symbolic computation - unpack states
         # States length can vary based on the system dimension
-        if not states:
-            return 0
-            
         sum_squares = sum(s*s for s in states)
         return sum_squares - radius**2
 
@@ -79,7 +76,7 @@ def double_integrator_hamiltonian(states, partials, func_map, input_bounds, reac
             ham += sign * input_magnitude * torch.abs(p2)
         else:
             abs_p2 = func_map['abs'](p2) if 'abs' in func_map else abs(p2)
-            ham += sign * input_magnitude * abs_p2
+            ham += float(sign * input_magnitude) * abs_p2
     else:
         # Asymmetric bounds branch with arithmetic formulation
         if using_torch:
@@ -91,9 +88,9 @@ def double_integrator_hamiltonian(states, partials, func_map, input_bounds, reac
             # For symbolic computation
             abs_p2 = func_map['abs'](p2) if 'abs' in func_map else abs(p2)
             if reach_aim == 'avoid':
-                ham += ((input_max + input_min)/2 * p2 + (input_max - input_min)/2 * abs_p2)
+                ham += (float((input_max + input_min)/2) * p2 + float((input_max - input_min)/2) * abs_p2)
             else:  # avoid
-                ham += ((input_max + input_min)/2 * p2 - (input_max - input_min)/2 * abs_p2)
+                ham += (float((input_max + input_min)/2) * p2 - float((input_max - input_min)/2) * abs_p2)
     
     return ham
 

@@ -1,6 +1,10 @@
 import torch
 from torch.utils.data import Dataset
 import logging
+import matplotlib.pyplot as plt
+import matplotlib.pyplot as mplot
+import random
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +15,8 @@ class ReachabilityDataset(Dataset):
     """
     def __init__(self, batch_size, t_min=0.0, t_max=1.0, 
                  seed=0, device=None,
-                 counterexamples=None, percentage_in_counterexample=20,
-                 percentage_at_t0=20, epsilon_radius=0.1,
+                 counterexamples=None, percentage_in_counterexample=10,
+                 percentage_at_t0=10, epsilon_radius=0.1,
                  num_states=None, compute_boundary_values=None):
         """
         Initialize base dataset parameters.
@@ -40,6 +44,9 @@ class ReachabilityDataset(Dataset):
         self.t_min = t_min
         self.t_max = t_max
 
+        self.state_min = -1.01
+        self.state_max = 1.01
+
         if num_states is None:
             raise ValueError("num_states must be specified")
         self.num_states = num_states
@@ -54,6 +61,39 @@ class ReachabilityDataset(Dataset):
         self.percentage_at_t0 = percentage_at_t0
         self.epsilon_radius = epsilon_radius
 
+        # Pre-allocate tensors for sampling to avoid repeated memory allocations
+        # Make sure these don't require gradients
+        self._time_tensor = torch.empty(self.batch_size, 1, device=self.device, requires_grad=False)
+        self._random_states_tensor = torch.empty(self.batch_size, self.num_states, device=self.device, requires_grad=False)
+        self._t0_states_tensor = None  # Will be initialized based on percentage_at_t0
+        self._counter_points_tensor = None  # Will be initialized if needed
+        self._noise_tensor = None  # Will be initialized if needed
+        
+        # Pre-compute bound tensors for clamping operations
+        self._min_bounds = torch.tensor([self.t_min] + [self.state_min] * self.num_states, device=self.device, requires_grad=False)
+        self._max_bounds = torch.tensor([self.t_max] + [self.state_max] * self.num_states, device=self.device, requires_grad=False)
+        
+        # Compute sizes once based on percentages
+        self.n_t0 = int(self.batch_size * self.percentage_at_t0 / 100)
+        self.n_counter = int(self.batch_size * self.percentage_in_counterexample / 100) if counterexamples is not None else 0
+        self.n_random = self.batch_size - self.n_counter - self.n_t0
+        
+        # Initialize t0 tensor now that we know its size
+        if self.n_t0 > 0:
+            self._t0_states_tensor = torch.empty(self.n_t0, self.num_states, device=self.device, requires_grad=False)
+            self._t0_time_tensor = torch.full((self.n_t0, 1), self.t_min, device=self.device, requires_grad=False)
+        
+        # Initialize counter tensors if needed
+        if self.n_counter > 0 and counterexamples is not None:
+            self._counter_idx_tensor = torch.empty(self.n_counter, dtype=torch.long, device=self.device, requires_grad=False)
+            self._counter_points_tensor = torch.empty(self.n_counter, self.num_states + 1, device=self.device, requires_grad=False)
+            self._noise_tensor = torch.empty(self.n_counter, self.num_states + 1, device=self.device, requires_grad=False)
+        
+        # Pre-allocate output tensors
+        self._coords = torch.empty(self.batch_size, 1, self.num_states + 1, device=self.device, requires_grad=False)
+        self._boundary_values = torch.empty(self.batch_size, 1, 1, device=self.device, requires_grad=False)
+        self._dirichlet_mask = torch.empty(self.batch_size, 1, dtype=torch.bool, device=self.device, requires_grad=False)
+
     def __len__(self):
         """Dataset length is always 1 as we generate data dynamically."""
         return 1
@@ -64,94 +104,95 @@ class ReachabilityDataset(Dataset):
         self.t_max = t_max
 
     def _get_time_samples(self):
-        """Generate time samples using current time range."""
-        # Regular sampling between t_min and t_max
-        time = torch.zeros(self.batch_size, 1, device=self.device).uniform_(self.t_min, self.t_max)
+        """Generate time samples using pre-allocated tensor."""
+        # Fill pre-allocated tensor with uniform values
+        self._time_tensor.uniform_(self.t_min, self.t_max)
         
-        # Ensure some samples at t=0 based on percentage_at_t0
-        n_t0 = int(self.batch_size * self.percentage_at_t0 / 100)
-        time[-n_t0:, 0] = self.t_min
+        # Set t=0 for designated samples
+        if self.n_t0 > 0:
+            self._time_tensor[-self.n_t0:, 0] = self.t_min
         
-        return time, self.t_min
+        return self._time_tensor, self.t_min
 
-    def _sample_near_counterexample(self, num_points):
+    def _sample_near_counterexample(self):
+        """Optimized sampling near counterexamples with pre-allocated tensors."""
+        if self.counterexamples is None or self.counterexamples.shape[0] == 0 or self.n_counter == 0:
+            return torch.empty(0, self.num_states + 1, device=self.device)
+            
+        # Sample indices into pre-allocated tensor
+        self._counter_idx_tensor.random_(0, self.counterexamples.shape[0])
+        
+        # Copy counterexample points to pre-allocated tensor
+        self._counter_points_tensor.copy_(self.counterexamples[self._counter_idx_tensor])
+        
+        # Generate noise into pre-allocated tensor
+        self._noise_tensor.randn_().mul_(self.epsilon_radius)
+        
+        # Add noise and clamp in-place
+        self._counter_points_tensor.add_(self._noise_tensor).clamp_(
+            min=self._min_bounds,
+            max=self._max_bounds
+        )
+        
+        return self._counter_points_tensor
+
+    def _sample_state_space(self, tensor):
         """
-        Sample points near the counterexample points including time dimension.
+        Fill pre-allocated tensor with uniform samples.
         
         Args:
-            num_points (int): Number of points to sample
-            
-        Returns:
-            torch.Tensor: Sampled points of shape (num_points, num_states + 1)
+            tensor (torch.Tensor): Pre-allocated tensor to fill
         """
-        if self.counterexamples is None:
-            return torch.empty(0.0, self.num_states, device=self.device)
-            
-        counter_idx = torch.randint(0, self.counterexamples.shape[0], (num_points,))
-        # Create a new tensor that requires gradients
-        counter_points = self.counterexamples[counter_idx].detach().clone()
-        noise = torch.randn_like(counter_points) * self.epsilon_radius
-        return counter_points + noise
-
-    def _sample_state_space(self, num_points):
-        """
-        Sample points in state space uniformly.
-        
-        Args:
-            num_points (int): Number of points to sample
-        
-        Returns:
-            torch.Tensor: Sampled points of shape (num_points, num_states)
-        """
-        if self.num_states is None:
-            raise ValueError("Child class must set self.num_states in __init__")
-        
-        # Sample points making sure to cover slightly more than the domain of interest [-1, 1]
-        return torch.zeros(num_points, self.num_states, device=self.device).uniform_(-1.01, 1.01)
+        tensor.uniform_(self.state_min, self.state_max)
+        return tensor
 
     def __getitem__(self, idx):
-        """Get samples using current time range."""
+        """Get samples using current time range and pre-allocated tensors."""
+        # We'll completely detach from computation graph at the end, no need for no_grad during generation
         time, start_time = self._get_time_samples()
         
-        # Calculate number of points for each category
-        n_t0 = int(self.batch_size * self.percentage_at_t0 / 100)
+        # Sample remaining points into pre-allocated tensors
+        self._sample_state_space(self._random_states_tensor[:self.n_random])
         
-        if self.counterexamples is not None:
-            n_counter = int(self.batch_size * self.percentage_in_counterexample / 100)
-            n_random = self.batch_size - n_counter - n_t0
-            
-            # Sample counterexample points (includes time)
-            counter_coords = self._sample_near_counterexample(n_counter)
-            
-        else:
-            n_random = self.batch_size - n_t0
-            
-        # Sample remaining points
-        random_states = self._sample_state_space(n_random)
-        t0_states = self._sample_state_space(n_t0)
+        if self.n_t0 > 0:
+            self._sample_state_space(self._t0_states_tensor)
         
-        # Combine with respective time coordinates
-        random_coords = torch.cat([time[:n_random], random_states], dim=1)
-        t0_coords = torch.cat([torch.zeros(n_t0, 1, device=self.device), t0_states], dim=1)
+        # Get counterexample points if needed
+        if self.n_counter > 0 and self.counterexamples is not None:
+            counter_coords = self._sample_near_counterexample()
         
-        # Combine all coordinates
-        if self.counterexamples is not None:
-            coords = torch.cat([counter_coords, random_coords, t0_coords], dim=0)
-        else:
-            coords = torch.cat([random_coords, t0_coords], dim=0)
-            
-        # Add observation dimension
-        coords = coords.unsqueeze(1)  # [batch_size, 1, num_dims]
+        # Fill the coords tensor directly (avoiding concatenation)
+        offset = 0
+        
+        # Fill random coords section
+        self._coords[:self.n_random, 0, 0] = time[:self.n_random, 0]
+        self._coords[:self.n_random, 0, 1:] = self._random_states_tensor[:self.n_random]
+        offset += self.n_random
+        
+        # Fill counterexample section if needed
+        if self.n_counter > 0 and self.counterexamples is not None:
+            self._coords[offset:offset+self.n_counter, 0, :] = counter_coords
+            offset += self.n_counter
+        
+        # Fill t0 section if needed
+        if self.n_t0 > 0:
+            self._coords[offset:, 0, 0] = self.t_min
+            self._coords[offset:, 0, 1:] = self._t0_states_tensor
+        
+        # Compute boundary values without squeezing/unsqueezing
+        boundary_values = self.compute_boundary_values(self._coords[..., 1:].squeeze(1))
+        self._boundary_values[:, 0, 0] = boundary_values.squeeze(1)
+        
+        # Create Dirichlet mask directly
+        self._dirichlet_mask[:, 0] = (self._coords[:, 0, 0] == start_time)
 
-        # Compute boundary values and add observation dimension, only pass states, not time
-        boundary_values = self.compute_boundary_values(coords[...,1:].squeeze(1)).unsqueeze(1)
-        
-        # Create Dirichlet mask with observation dimension
-        dirichlet_mask = (coords[:, :, 0] == start_time)
-
-        return {'coords': coords}, {
-            'source_boundary_values': boundary_values,
-            'dirichlet_mask': dirichlet_mask.bool()
+        # Create output dictionary with tensor views, but detach to prevent gradient tracking
+        # This is much more efficient than cloning
+        return {
+            'coords': self._coords.detach()
+        }, {
+            'source_boundary_values': self._boundary_values.detach(),
+            'dirichlet_mask': self._dirichlet_mask.detach()
         }
 
     def add_counterexample(self, counterexample: torch.Tensor):
@@ -183,4 +224,45 @@ class ReachabilityDataset(Dataset):
     def get_batch(self):
         """Generate a new batch of data directly without using indexing."""
         return self.__getitem__(0)
+    
+    def _plot_samples(self, coords, percentage=1):
+        """
+        Visualize the distribution of sampled points in state space and time.
+        
+        Args:
+            coords (torch.Tensor): Sampled coordinates of shape (batch_size, 1, num_states + 1)
+        """
+        # Extract t, x, and y coordinates from the sampled points
+        t = coords[:, 0, 0].cpu().numpy()
+        x = coords[:, 0, 1].cpu().numpy()
+        y = coords[:, 0, 2].cpu().numpy()
+        
+        # Subsample 1% of the points for plotting
+        indices = random.sample(range(len(t)), int(len(t) * percentage/100))
+        t_sampled = t[indices]
+        x_sampled = x[indices]
+        y_sampled = y[indices]
+        
+        # Create a 3D scatter plot
+        fig = mplot.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
+        ax.scatter(x_sampled, y_sampled, t_sampled, alpha=0.5)
+        
+        ax.set_xlabel("State Variable 1")
+        ax.set_ylabel("State Variable 2")
+        ax.set_zlabel("Time")
+        ax.set_title("Distribution of Sampled Points in State-Time Space")
+        
+        ax.set_xlim(self.state_min, self.state_max)
+        ax.set_ylim(self.state_min, self.state_max)
+        ax.set_zlim(self.t_min, self.t_max)
+        
+        # Save the figure to a file
+        if not os.path.exists('plots'):
+            os.makedirs('plots')
+        
+        filename = f"plots/sample_distribution_{random.randint(0, 1000)}.png"
+        mplot.savefig(filename)
+        plt.close(fig)  # Close the figure to release memory
+        logger.debug(f"Saved plot to {filename}")
 
