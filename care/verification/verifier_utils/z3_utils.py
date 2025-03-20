@@ -1,7 +1,7 @@
 import logging
 import z3
 import sympy
-from certreach.verification.verifier_utils.symbolic import compute_partial_deriv
+from care.verification.verifier_utils.symbolic import compute_partial_deriv
 
 logger = logging.getLogger(__name__)
 

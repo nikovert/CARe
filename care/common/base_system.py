@@ -4,13 +4,13 @@ import logging
 import inspect
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Optional, Callable, List, Dict, Union, Tuple
+from typing import Optional, Callable, List
 
-from certreach.learning.networks import SingleBVPNet, NetworkConfig
-from certreach.common.dataset import ReachabilityDataset
-from certreach.learning.training import train
-from certreach.common.matlab_loader import load_matlab_data, compare_with_nn
-from certreach.learning.loss_functions import HJILossFunction
+from care.learning.networks import SingleBVPNet, NetworkConfig
+from care.common.dataset import ReachabilityDataset
+from care.learning.training import train
+from care.common.matlab_loader import load_matlab_data, compare_with_nn
+from care.learning.loss_functions import HJILossFunction
 
 logger = logging.getLogger(__name__)
 
@@ -124,17 +124,19 @@ class DynamicalSystem:
         train(
             model=self.model,
             dataset=dataset,
-            epochs=self.args.num_epochs,
+            max_epochs=10*self.args.num_epochs,
+            curriculum_epochs=self.args.num_epochs,
             lr=self.args.lr,
             epochs_til_checkpoint=self.args.epochs_til_ckpt,
             model_dir=self.root_path,
             loss_fn=self.loss_fn,
-            pretrain_percentage=self.args.pretrain_percentage,
             time_min=self.args.t_min,
             time_max=self.args.t_max,
             validation_fn=self.validate,
             device=self.device,
-            use_amp=True
+            is_finetuning=False,  # Initial training is not fine-tuning
+            epsilon_bndry=self.args.epsilon * 0.05,
+            epsilon_diff=self.args.epsilon * 0.95
         )
     
     def _get_state_names(self) -> List[str]:

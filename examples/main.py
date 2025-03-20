@@ -3,12 +3,11 @@ import os
 import logging
 from examples.log import configure_logging
 import torch
-from certreach.verification.cegis import CEGISLoop
+from care.verification.cegis import CEGISLoop
 from examples.factories import create_example, EXAMPLE_NAMES
 from examples.experiment_utils import get_experiment_folder, setup_experiment_folder
 import numpy as np
-import random   
-import json
+import random  
 
 # Create module-level logger
 logger = logging.getLogger(__name__)
@@ -20,14 +19,12 @@ def parse_args():
     # Required arguments
     p.add_argument('--example', type=str, required=True, choices=EXAMPLE_NAMES,
                   help='Name of the example to run')
-    p.add_argument('--run_mode', type=str, required=True, choices=['train', 'verify', 'cegis'],
+    p.add_argument('--run_mode', type=str, required=True, choices=['train', 'cegis'],
                   help='Mode to run: train, verify, or cegis')
     
     # Logging and Experiment Settings
     p.add_argument('--logging_root', type=str, default='./logs',
                   help='Root directory for logging')
-    p.add_argument('--experiment_name', type=str, default="Double_integrator",
-                  help='Name of the experiment for logging purposes')
     p.add_argument('--load_model', action='store_true', default=False,
                   help='Whether to load model from previous experiment')
 
@@ -85,15 +82,15 @@ def parse_args():
                   help='Radius around counterexample points for sampling')
     p.add_argument('--max_iterations', type=int, default=7,
                   help='Maximum number of CEGIS iterations')
-    p.add_argument('--solver', type=str, default='auto', choices=['auto', 'dreal', 'z3', 'marabou'],
-                  help='SMT solver to use for verification (auto will select based on problem)')
+    p.add_argument('--solver', type=str, default='dreal', choices=['dreal', 'z3', 'marabou'],
+                  help='SMT solver to use for verification')
     
     # Add device argument
     p.add_argument('--device', type=str, default=None,
                   help='Device to use for computation (cuda/cpu)')
     
     # Add solution checking argument
-    p.add_argument('--check_solution', action='store_true', default=True,
+    p.add_argument('--check_solution', action='store_true', default=False,
                   help='Compare results with true values after verification')
 
     # Dataset Settings
@@ -194,27 +191,6 @@ def main():
         if args.check_solution:
             logger.info("Comparing results with true values...")
             example.compare_with_true_values()
-    
-    elif args.run_mode == 'verify':
-        if not loaded_model:
-            logger.error("No model loaded for verification")
-            return
-        logger.info("Starting verification phase")
-        example.verify()
-        # Plot results with current epsilon
-        dreal_result_path = f"{example.root_path}/dreal_result.json"
-        if os.path.exists(dreal_result_path):
-            with open(dreal_result_path, 'r') as f:
-                dreal_result = json.load(f)
-                epsilon = dreal_result.get("epsilon", args.epsilon)
-            logger.info(f"Using epsilon value: {epsilon} from dReal results")
-            example.plot_final_model(example.model, example.root_path, epsilon)
-            
-            # Add comparison with true values if requested
-            if args.check_solution:
-                logger.info("Comparing results with true values...")
-                example.compare_with_true_values()
-
     elif args.run_mode == 'cegis':
         logger.info("Starting CEGIS phase")
         

@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any
 import dreal
 from dreal import Variable, And, Or, Not, CheckSatisfiability
-from certreach.verification.verifier_utils.symbolic import compute_partial_deriv
+from care.verification.verifier_utils.symbolic import compute_partial_deriv
 
 logger = logging.getLogger(__name__)
 use_if_then_else = False

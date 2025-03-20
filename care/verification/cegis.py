@@ -4,9 +4,9 @@ import logging
 import torch
 from typing import Optional, List
 from dataclasses import dataclass
-from certreach.verification.SMT_verifier import SMTVerifier
-from certreach.common.dataset import ReachabilityDataset
-from certreach.learning.training import train
+from care.verification.SMT_verifier import SMTVerifier
+from care.common.dataset import ReachabilityDataset
+from care.learning.training import train
 
 logger = logging.getLogger(__name__)
 

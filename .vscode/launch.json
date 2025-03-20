@@ -1,38 +1,6 @@
 {
-    "version": "0.2.0",
+    "version": "1.0.0",
     "configurations": [
-        {
-            "name": "Train Double Integrator",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/examples/main.py",
-            "args": [
-                "--example", "double_integrator",
-                "--run_mode", "train",
-                "--logging_root", "./logs"
-            ],
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            }
-        },
-        {
-            "name": "Verify Double Integrator",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/examples/main.py",
-            "args": [
-                "--example", "double_integrator",
-                "--run_mode", "verify",
-                "--logging_root", "./logs"
-            ],
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            }
-        },
         {
             "name": "Quick CEGIS Test",
             "type": "debugpy",
@@ -51,8 +19,7 @@
                 "--reach_aim", "reach",
                 "--min_with", "none",
                 "--set_type", "set",
-                "--model_type", "relu_primitive",
-                "--solver", "dreal",
+                "--model_type", "sine"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -61,7 +28,7 @@
             }
         },
         {
-            "name": "CEGIS Double Integrator",
+            "name": "Double Integrator",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/examples/main.py",
@@ -76,8 +43,7 @@
                 "--set_type", "set",
                 "--num_nl", "16",
                 "--num_hl", "0",
-                "--epsilon", "0.3",
-                "--load_model"
+                "--epsilon", "0.3"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -86,34 +52,7 @@
             }
         },
         {
-            "name": "CEGIS Double Integrator - ReLUPrimitive",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/examples/main.py",
-            "args": [
-                "--example", "double_integrator",
-                "--run_mode", "cegis",
-                "--logging_root", "./logs",
-                "--reach_mode", "backward",
-                "--reach_aim", "reach",
-                "--min_with", "none",
-                "--set_type", "set",
-                "--num_nl", "64",
-                "--num_hl", "0",
-                "--batch_size", "25600",
-                "--epsilon", "0.2",
-                "--model_type", "relu_primitive",
-                "--solver", "dreal",
-                "--load_model"
-            ],
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            }
-        },
-        {
-            "name": "CEGIS Triple Integrator",
+            "name": "Triple Integrator",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/examples/main.py",
@@ -128,8 +67,7 @@
                 "--min_with", "none",
                 "--set_type", "set",
                 "--num_nl", "64",
-                "--num_hl", "0",
-                "--load_model"
+                "--num_hl", "0"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -138,7 +76,7 @@
             }
         },
         {
-            "name": "CEGIS Air3D",
+            "name": "Air3D",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/examples/main.py",
@@ -157,7 +95,6 @@
                 "--num_hl", "0",
                 "--epsilon", "0.3",
                 "--model_type", "sine",
-                "--solver", "dreal", 
             ],
             "console": "integratedTerminal",
             "justMyCode": true,

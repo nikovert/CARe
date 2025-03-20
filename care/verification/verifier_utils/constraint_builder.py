@@ -3,9 +3,9 @@ from typing import Dict, List, Any, Tuple, Optional, Callable
 import ast
 import time
 import multiprocessing as mp
-from certreach.verification.verifier_utils.dreal_utils import dreal_function_map, check_with_dreal, parse_dreal_expression
-from certreach.verification.verifier_utils.marabou_utils import check_with_marabou
-from certreach.verification.verifier_utils.z3_utils import z3_function_map, check_with_z3, parse_z3_expression
+from care.verification.verifier_utils.dreal_utils import dreal_function_map, check_with_dreal, parse_dreal_expression
+from care.verification.verifier_utils.marabou_utils import check_with_marabou
+from care.verification.verifier_utils.z3_utils import z3_function_map, check_with_z3, parse_z3_expression
 
 function_maps = {
     'z3': z3_function_map,

@@ -1,6 +1,6 @@
 [project]
-name = "certreach"
-version = "0.1.0"
+name = "CARe"
+version = "1.0.0"
 description = "certifiable reachability analysis"
 authors = [
     {name = "Nikolaus Vertovec", email = "nikolaus.vertovec@st-hughs.ox.ac.uk"},
@@ -9,16 +9,15 @@ authors = [
 ]
 
 dependencies = [
-    "dreal==4.21.6.2",
-    "matplotlib==3.9.2",
+    "dreal",
+    "matplotlib",
     "numpy",
-    "scipy==1.13.1",
-    "sympy==1.13.1",
+    "scipy",
+    "sympy",
     "tensorboard",
-    "torch==2.6.0",
-    "torchvision==0.21.0",
+    "torch",
+    "torchvision",
     "tqdm",
-    "z3",
     "configargparse",
     "ray"
 ]
@@ -31,7 +30,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["certreach"]
+packages = ["care"]
 
 [tool.hatch.build]
 only-packages = true
