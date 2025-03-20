@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 from tqdm.autonotebook import tqdm
-import time
 import numpy as np
 from pathlib import Path
 import logging

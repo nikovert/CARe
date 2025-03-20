@@ -1,13 +1,12 @@
 import logging
-from typing import List, Union, Dict, Any, Callable
+from typing import List
 
 import torch
 import matplotlib
 from math import sqrt, pi
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
-from certreach.common.base_system import DynamicalSystem
+from care.common.base_system import DynamicalSystem
 from examples.factories import register_example
 
 logger = logging.getLogger(__name__)

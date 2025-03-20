@@ -20,7 +20,6 @@ class NetworkConfig:
     poly_degree: Union[int, tune.grid_search, tune.choice] = 2
     initialization_scale: Union[float, tune.uniform, tune.loguniform] = 1.0
     first_layer_initialization_scale: Union[float, tune.uniform, tune.loguniform] = 30.0
-    dropout_rate: Union[float, tune.uniform] = 0.0
     use_batch_norm: Union[bool, tune.grid_search, tune.choice] = False
     sine_frequency: Union[float, tune.uniform] = 30.0  # New parameter
     
@@ -53,7 +52,6 @@ class NetworkConfig:
             "poly_degree": tune.choice([2, 3]),
             "initialization_scale": tune.loguniform(0.1, 10.0),
             "first_layer_initialization_scale": tune.loguniform(1.0, 100.0),
-            "dropout_rate": tune.uniform(0.0, 0.5),
             "use_batch_norm": tune.choice([True, False])
         }
 
@@ -354,10 +352,6 @@ class SingleBVPNet(torch.nn.Module):
         # Activation (if provided)
         if activation is not None:
             layers.append(activation)
-
-        # Optional Dropout (not on first or output layer)
-        if self.config.dropout_rate > 0 and not is_first and not is_output:
-            layers.append(torch.nn.Dropout(self.config.dropout_rate))
 
         return torch.nn.Sequential(*layers)
 

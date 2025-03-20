@@ -3,7 +3,7 @@ import logging
 from math import sqrt
 from typing import List
 
-from certreach.common.base_system import DynamicalSystem
+from care.common.base_system import DynamicalSystem
 from examples.factories import register_example
 
 logger = logging.getLogger(__name__)

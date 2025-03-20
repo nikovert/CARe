@@ -4,10 +4,10 @@ import torch
 import json
 from typing import Dict, Any, Tuple, Callable, Optional
 import multiprocessing as mp
-from certreach.verification.verifier_utils.symbolic import extract_symbolic_model
-from certreach.verification.verifier_utils.dreal_utils import extract_dreal_partials
-from certreach.verification.verifier_utils.z3_utils import extract_z3_partials
-from certreach.verification.verifier_utils.constraint_builder import (
+from care.verification.verifier_utils.symbolic import extract_symbolic_model
+from care.verification.verifier_utils.dreal_utils import extract_dreal_partials
+from care.verification.verifier_utils.z3_utils import extract_z3_partials
+from care.verification.verifier_utils.constraint_builder import (
     prepare_constraint_data_batch,
     process_check_advanced,
     serialize_expression,
