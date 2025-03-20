@@ -144,3 +144,7 @@ Thumbs.db
 # Matlab files
 *.mat
 *.mat
+*.zip
+
+#skip old logs
+/logs_old/

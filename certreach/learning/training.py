@@ -241,15 +241,14 @@ def train(model: torch.nn.Module,
             if (epoch % epochs_til_checkpoint/10 == 0) or stopping_flag:
                 tqdm.write(f"Epoch {epoch}, Total Loss: {train_loss:.6f},"
                           f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
-                          f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}, "
-                          f"Time: {time.time() - start_time:.3f}s")
+                          f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}")
                 tqdm.write(f"Diff Constraint Mean: {losses['diff_constraint_hom'].mean():.6f}, "
                           f"Diff Constraint Max: {losses['diff_constraint_hom'].max():.6f}, "
                           f"Dirichlet Max: {losses['dirichlet'].max():.6f}")
                 curr_progress = curriculum.get_progress()
                 t_min, t_max = curriculum.get_time_range()
                 phase = "Pretraining" if curriculum.is_pretraining else "Curriculum"
-                tqdm.write(f"{phase} - Progress: {curr_progress:.2%}, Time range: [{t_min:.3f}, {t_max:.3f}]")
+                tqdm.write(f"{phase} Progress: {curr_progress:.2%}, Time range: [{t_min:.3f}, {t_max:.3f}]")
 
             pbar.update(1)
 
@@ -268,6 +267,13 @@ def train(model: torch.nn.Module,
             epoch=max_epochs,
             training_completed=True
         )
+        
+        logger.info(f"End of Training, Total Loss: {train_loss:.6f},"
+                    f"L1 Reg: {(l1_lambda * l1_loss if l1_lambda > 0 else 0):.6f}, "
+                    f"L2 Reg: {(weight_decay * sum((p ** 2).sum() for p in model.parameters())):.6f}")
+        logger.info(f"Diff Constraint Mean: {losses['diff_constraint_hom'].mean():.6f}, "
+                    f"Diff Constraint Max: {losses['diff_constraint_hom'].max():.6f}, "
+                    f"Dirichlet Max: {losses['dirichlet'].max():.6f}")
 
         # Save final losses
         np.savetxt(checkpoints_dir / 'train_losses_final.txt', 

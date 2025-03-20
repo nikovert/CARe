@@ -18,7 +18,7 @@ from certreach.verification.verifier_utils.constraint_builder import (
 
 logger = logging.getLogger(__name__)
 
-def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian, compute_boundary, solver_name, epsilon=0.5, epsilon_ratio=0.02, delta = 0.01,
+def verify_with_SMT(value_fn, partials_variables, variables, compute_hamiltonian, compute_boundary, solver_name, epsilon=0.5, epsilon_ratio=0.02, delta = 0.001,
                       reach_mode='forward', min_with='none', set_type='set', save_directory="./", execution_mode="parallel", additional_constraints=None):
     """
     Verifies if the HJB equation holds using dReal for a double integrator system.
@@ -238,7 +238,7 @@ class SMTVerifier:
         # Auto-select based on model properties
         # Check if model has trigonometric functions (better with dReal)
         has_trig = (str(str(symbolic_model)).find('sin') >= 0) or (str(str(symbolic_model)).find('cos') >= 0)
-        self.delta = 0.01  # Default delta for dReal verification
+        self.delta = 0.001  # Default delta for dReal verification
 
         if self.solver_preference in ['z3', 'marabou'] and has_trig:
             logger.info("Model contains trigonometric functions: Using dReal for verification")
@@ -249,7 +249,7 @@ class SMTVerifier:
                 self._solver =  'dreal'
             else:
                 # Need to add delta here for constraints that are solved with delta
-                self._solver =  'marabou'
+                self._solver =  'dreal'
         else:
             self._solver = self.solver_preference
         
@@ -260,7 +260,8 @@ class SMTVerifier:
         counterexample: torch.Tensor,
         loss_fn: Callable,
         compute_boundary: Callable,
-        epsilon: float,
+        epsilon_bndry: float,
+        epsilon_diff: float,
         model: torch.nn.Module
     ) -> Dict[str, Any]:
         """
@@ -318,22 +319,22 @@ class SMTVerifier:
             pde_result_delta = 0.0
 
         # Determine which condition is violated based on epsilon
-        if boundary_diff is not None and boundary_diff > epsilon-self.delta:
+        if boundary_diff is not None and boundary_diff > epsilon_bndry - self.delta:
             result['is_valid_ce'] = True
             result['violation_type'] = 'boundary'
             result['violation_amount'] = boundary_diff
-            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon-self.delta}")
+            logger.info(f"Valid counterexample: Boundary condition violated by {boundary_diff:.6f} > {epsilon_bndry - self.delta}")
         
-        elif pde_residual > epsilon-pde_result_delta:
+        elif pde_residual > epsilon_diff - pde_result_delta:
             result['is_valid_ce'] = True
             result['violation_type'] = 'pde'
             result['violation_amount'] = pde_residual
-            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon-pde_result_delta}")
+            logger.info(f"Valid counterexample: PDE violated by {pde_residual:.6f} > {epsilon_diff - pde_result_delta}")
         
         else:
             boundary_info = f"Boundary diff: {boundary_diff:.6f}, " if boundary_diff is not None else ""
             logger.warning(f"{boundary_info}PDE residual: {pde_residual:.6f}")
-            raise ValueError(f"Invalid counterexample: No violation exceeds epsilon={epsilon}")
+            raise ValueError(f"Invalid counterexample: No violation exceeds epsilon={epsilon_diff}")
         
         # Return detailed validation results
         return result

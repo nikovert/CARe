@@ -83,7 +83,7 @@ def parse_args():
                   help='Minimum epsilon to achieve before terminating CEGIS')
     p.add_argument('--epsilon_radius', type=float, default=0.1,
                   help='Radius around counterexample points for sampling')
-    p.add_argument('--max_iterations', type=int, default=50,
+    p.add_argument('--max_iterations', type=int, default=3,
                   help='Maximum number of CEGIS iterations')
     p.add_argument('--solver', type=str, default='auto', choices=['auto', 'dreal', 'z3', 'marabou'],
                   help='SMT solver to use for verification (auto will select based on problem)')
@@ -154,6 +154,9 @@ def main():
     log_file = os.path.join(exp_folder_path, 'training.log')
     configure_logging(log_file, log_level=logging.DEBUG)
     
+    # Log the choice of arguments
+    logger.info(f"Arguments: {args.__dict__}")
+    
     # Simplified device setup for single GPU
     if args.device == 'cuda' and torch.cuda.is_available():
         device = torch.device('cuda:0')  # Use the only GPU
@@ -176,9 +179,9 @@ def main():
     if prev_folder_path and args.load_model:
         loaded_model = load_model_from_folder(example, prev_folder_path)
 
-    # Print model information
+    # Print model information to logger
     logger.info("Model Architecture:")
-    print(example.model)
+    logger.info(example.model)
     
     example.root_path = exp_folder_path
 

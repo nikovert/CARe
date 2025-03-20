@@ -228,7 +228,7 @@ class CEGISLoop:
                     if self.current_epsilon <= self.min_epsilon:
                         logger.info(f"Reached minimum epsilon threshold: {self.min_epsilon}")
                         break
-                    self.current_epsilon *= 0.75  # Reduce epsilon by 25%
+                    self.current_epsilon *= 0.9  # Reduce epsilon by 10%
                     # Ensure we don't go below minimum epsilon
                     self.current_epsilon = max(self.current_epsilon, self.min_epsilon)
                     self.args.epsilon = self.current_epsilon
@@ -237,7 +237,8 @@ class CEGISLoop:
                 validation_results = self.verifier.validate_counterexample(counterexample=counterexample, 
                                     loss_fn=self.example.loss_fn,
                                     compute_boundary=self.example.boundary_fn,
-                                    epsilon=self.current_epsilon,
+                                    epsilon_bndry=self.current_epsilon*self.epsilon_ratio,
+                                    epsilon_diff=self.current_epsilon*(1-self.epsilon_ratio),
                                     model=self.example.model)
                 
                 # Create a subdirectory for this counterexample iteration inside the checkpoint directory
