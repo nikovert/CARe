@@ -8,8 +8,17 @@ Recent approaches to leveraging deep learning for computing reachable sets of co
 
 This package requires the dReal SMT solver. To ensure a consistent environment, we recommend using Docker. 
 
-### Using Docker
-If you have Docker installed within VS Code, you can simply create a new development container from the Dockerfile, which will set up a reproducible environment with all dependencies installed, including dReal.
+## Setting Up the Development Container in VS Code 
+
+If you have Docker installed in VS Code, you can easily create a development container from the provided Dockerfile. This will set up a reproducible environment with all necessary dependencies, including dReal.  
+
+### Steps to Set Up the Development Container  
+
+1. **Open the Repository** – Ensure the repository is open in VS Code.  
+2. **Access the Docker Plugin** – In the left sidebar, navigate to the Docker extension.  
+3. **Create a New Container** – Click the **plus (+) icon** next to "Containers" and select **"Open Current Folder in Container"**.  
+4. **Wait for Setup** – In the bottom right corner of VS Code, you'll see **"Opening Remote..."** This indicates that a new Docker container is being built in the background, which may take a few minutes.  
+5. **You're Ready!** – Once the process is complete, your development environment will be fully set up with CARe installed and ready to use.  
 
 ## Installation (without Docker)
 
