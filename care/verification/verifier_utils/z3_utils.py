@@ -1,14 +1,20 @@
 import logging
-import z3
 import sympy
 from care.verification.verifier_utils.symbolic import compute_partial_deriv
 
 logger = logging.getLogger(__name__)
 
+# Try to import Z3, but make it optional
+try:
+    import z3
+    Z3_AVAILABLE = True
+except ImportError:
+    Z3_AVAILABLE = False
+
 def parse_z3_expression(expression):
     return z3.deserialize(expression)
 
-def _check_constraint(constraints) -> z3.Model:
+def _check_constraint(constraints):
     """Helper function to check constraints with Z3."""
     solver = z3.Solver()
     solver.add(constraints)

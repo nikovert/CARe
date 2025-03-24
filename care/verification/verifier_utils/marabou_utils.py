@@ -1,9 +1,14 @@
 import logging
 from typing import Dict, Tuple, Optional
-from maraboupy import MarabouCore
 import re
 
 logger = logging.getLogger(__name__)
+try:
+    from maraboupy import MarabouCore
+    marabou_AVAILABLE = True
+except ImportError:
+    marabou_AVAILABLE = False
+
 
 class MarabouExpressionParser:
     """Parse symbolic expressions into Marabou input queries with ReLU support."""

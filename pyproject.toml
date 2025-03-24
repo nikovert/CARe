@@ -19,7 +19,7 @@ dependencies = [
     "torchvision",
     "tqdm",
     "configargparse",
-    "ray"
+    "ray[tune]"
 ]
 
 [tool.flake8]

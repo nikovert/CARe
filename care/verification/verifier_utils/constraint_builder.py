@@ -4,13 +4,21 @@ import ast
 import time
 import multiprocessing as mp
 from care.verification.verifier_utils.dreal_utils import dreal_function_map, check_with_dreal, parse_dreal_expression
-from care.verification.verifier_utils.marabou_utils import check_with_marabou
-from care.verification.verifier_utils.z3_utils import z3_function_map, check_with_z3, parse_z3_expression
+from care.verification.verifier_utils.marabou_utils import marabou_AVAILABLE
+try:
+    import z3
+    Z3_AVAILABLE = True
+except ImportError:
+    Z3_AVAILABLE = False
+if marabou_AVAILABLE:
+    from care.verification.verifier_utils.marabou_utils import check_with_marabou
+if Z3_AVAILABLE:
+    from care.verification.verifier_utils.z3_utils import z3_function_map, check_with_z3, parse_z3_expression, Z3_AVAILABLE
 
 function_maps = {
-    'z3': z3_function_map,
+    'z3': z3_function_map if Z3_AVAILABLE else None,
     'dreal': dreal_function_map,
-    'marabou': dreal_function_map # Marabou uses dReal function map
+    'marabou': dreal_function_map if marabou_AVAILABLE else None  # Marabou uses dReal function map
 }
 
 logger = logging.getLogger(__name__)
@@ -60,7 +68,7 @@ def rebuild_constraint(func_map,
     elif func_map['solver_name'] == 'dreal':
         parse = lambda s: parse_dreal_expression(s, variables, func_map)
     else:
-        ValueError(f"Unknown solver: {func_map['solver_name']}")
+        raise ValueError(f"Unknown solver: {func_map['solver_name']}")
 
     value_fn = parse(value_fn_expr)
     boundary_value = parse(boundary_fn_expr)
@@ -127,6 +135,9 @@ def process_check_advanced(solver_name, constraint_data, hamiltonian_expr, value
     """
     # Create the function map based on the solver name
     func_map = function_maps[solver_name]
+    if func_map is None:
+        logger.error(f"Solver {solver_name} is not available.")
+        return constraint_data['constraint_id'], f"Error: Solver {solver_name} is not available."
 
     # Extract basic constraint data
     constraint_id = constraint_data['constraint_id']
@@ -179,7 +190,7 @@ def process_check_advanced(solver_name, constraint_data, hamiltonian_expr, value
         elif solver_name == 'dreal' or 'marabou':
             result = check_with_dreal(constraint, delta)
         else:
-            ValueError(f"Unknown solver: {solver_name}")
+            raise ValueError(f"Unknown solver: {solver_name}")
 
     check_time = time.monotonic() - start_time
     

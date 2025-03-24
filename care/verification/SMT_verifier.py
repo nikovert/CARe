@@ -6,7 +6,13 @@ from typing import Dict, Any, Tuple, Callable, Optional
 import multiprocessing as mp
 from care.verification.verifier_utils.symbolic import extract_symbolic_model
 from care.verification.verifier_utils.dreal_utils import extract_dreal_partials
-from care.verification.verifier_utils.z3_utils import extract_z3_partials
+try:
+    import z3
+    Z3_AVAILABLE = True
+except ImportError:
+    Z3_AVAILABLE = False
+if Z3_AVAILABLE:
+    from care.verification.verifier_utils.z3_utils import extract_z3_partials
 from care.verification.verifier_utils.constraint_builder import (
     prepare_constraint_data_batch,
     process_check_advanced,
@@ -251,7 +257,14 @@ class SMTVerifier:
                 # Need to add delta here for constraints that are solved with delta
                 self._solver =  'dreal'
         else:
-            self._solver = self.solver_preference
+            if self.solver_preference == 'z3' and not Z3_AVAILABLE:
+                logger.warning("Z3 solver not available. Falling back to dReal.")
+                self._solver = 'dreal'
+            elif self.solver_preference == 'marabou' and not marabou_AVAILABLE:
+                logger.warning("Marabou solver not available. Falling back to dReal.")
+                self._solver = 'dreal'
+            else:
+                self._solver = self.solver_preference
         
         return self._solver
 
